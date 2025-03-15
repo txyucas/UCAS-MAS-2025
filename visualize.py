@@ -16,6 +16,8 @@ from olympics_engine.AI_olympics import AI_Olympics
 import random
 import json
 
+checkpoint_path_dic={}
+agent_dic={}
 
 def store(record, name):
 

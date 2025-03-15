@@ -31,4 +31,33 @@ ToDo
 ```
 python olympics_engine\olympics_engine\main.py #奥林匹克引擎自带的可视化工具
 python visualize_no_note.py #在其基础上精简的可视化工具
+
+```
+
+## 项目结构
+
+- algorithm: 包含算法实现，目前有都为空，预期加入HAC算法和PPO算法
+- configs: 配置文件目录，包含 config.json(及第ai的envs自带的config) 和 config.py(模型训练时用到的config，包含模型参数等，目前为空)
+- envs: 包含多个奥林匹克游戏环境实现，如足球、冰球等，从及第ai获取，项目中不会对其操作
+- models: 神经网络模型目录，包含 CNN 和 FNN 实现，已经实现，后续更新config
+- olympics_engine: 奥林匹克引擎，项目中基本不会对其进行操作 
+- references: 参考资料和示例代码,仅供参考使用，最后会删掉，参考[easy-rl](https://github.com/datawhalechina/easy-rl)
+- 根目录下的主要文件:
+  - eval.py: 评估脚本，目前为空
+  - train.py: 训练脚本 ，目前为空
+  - visualize.py/`visualize_no_note.py`: 可视化工具
+  - `submission.py`: 提交文件，目前为从及第ai获取的示例文件
+  - requirements.txt: 依赖包列表，后续更新
+
+
+
+## Cite
+```
+@misc{UCAS-MAS-2025,
+  author = {tianxiangyu@txyucas,geqiyu@},
+  title = {中国科学院大学2025年多智能体博弈小组作业},
+  year = {2025},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+}
 ```
