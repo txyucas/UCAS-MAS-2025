@@ -13,8 +13,8 @@ sys.path.append(olympics_path)
 from olympics_engine.generator import create_scenario
 from olympics_engine.scenario.curling_competition import *
 
-from utils.box import Box
-from env.simulators.game import Game
+from envs.utils.box import Box
+from envs.env.simulators.game import Game
 
 import numpy as np
 

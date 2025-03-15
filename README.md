@@ -27,3 +27,8 @@ ToDo
 ```
 ToDo
 ```
+5.可视化
+```
+python olympics_engine\olympics_engine\main.py #奥林匹克引擎自带的可视化工具
+python visualize_no_note.py #在其基础上精简的可视化工具
+```

@@ -18,8 +18,8 @@ from olympics_engine.core import OlympicsBase
 from olympics_engine.generator import create_scenario
 from olympics_engine.scenario.running_competition import *
 
-from env.simulators.game import Game
-from utils.box import Box
+from envs.utils.box import Box
+from envs.env.simulators.game import Game
 
 
 import argparse

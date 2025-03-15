@@ -10,15 +10,17 @@ sys.path.append(olympics_path)
 from olympics_engine.generator import create_scenario
 from olympics_engine.scenario.billiard_joint import *
 
-from utils.box import Box
-from env.simulators.game import Game
+from envs.utils.box import Box
+from envs.env.simulators.game import Game
 
 import numpy as np
 
 class OlympicsBilliard(Game):
     def __init__(self, conf, seed=None):
-        super(OlympicsBilliard, self).__init__(conf['n_player'], conf['is_obs_continuous'], conf['is_act_continuous'],
-                                         conf['game_name'], conf['agent_nums'], conf['obs_type'])
+        super(OlympicsBilliard,
+              self).__init__(conf['n_player'], conf['is_obs_continuous'],
+                             conf['is_act_continuous'], conf['game_name'],
+                             conf['agent_nums'], conf['obs_type'])
         self.seed = seed
         self.set_seed()
 
@@ -137,7 +139,3 @@ class OlympicsBilliard(Game):
 
     def get_single_action_space(self, player_id):
         return self.joint_action_space[player_id]
-
-
-
-

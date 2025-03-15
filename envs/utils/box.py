@@ -1,6 +1,6 @@
 import numpy as np
 
-from .space import Space
+from envs.utils.space import Space
 from gym import logger
 
 

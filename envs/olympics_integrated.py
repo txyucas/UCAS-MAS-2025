@@ -10,8 +10,8 @@ sys.path.append(CURRENT_PATH)
 
 from olympics_engine.AI_olympics import AI_Olympics
 
-from utils.box import Box
-from env.simulators.game import Game
+from envs.utils.box import Box
+from envs.env.simulators.game import Game
 
 import numpy as np
 
