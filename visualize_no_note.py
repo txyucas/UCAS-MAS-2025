@@ -29,35 +29,35 @@ def load_record(path):
 
 RENDER = True
 
+checkpoint_path_dict={}
+agent_dict={}
+game_map_dict = {
+    'running': Running,
+    'running-competition': lambda gm: Running_competition(meta_map=gm, map_id=random.randint(1, 10)),
+    'seeks': Seeks,
+    'table-hockey': table_hockey,
+    'football': football,
+    'wrestling': wrestling,
+    'billiard': billiard,
+    'billiard-competition': billiard_competition,
+    'curling': curling,
+    'billiard-joint': billiard_joint,
+    'curling-long': curling_long,
+    'curling-competition': curling_competition
+}
+
 def initialize_game(map):
     if 'all' in map:
         game = AI_Olympics(random_selection=False, minimap=False)
         agent_num = 2
     else:
         Gamemap = create_scenario(map)
-        game_map_dict = {
-            'running': Running,
-            'running-competition': lambda gm: Running_competition(meta_map=gm, map_id=random.randint(1, 10)),
-            'seeks': Seeks,
-            'table-hockey': table_hockey,
-            'football': football,
-            'wrestling': wrestling,
-            'billiard': billiard,
-            'billiard-competition': billiard_competition,
-            'curling': curling,
-            'billiard-joint': billiard_joint,
-            'curling-long': curling_long,
-            'curling-competition': curling_competition
-        }
         if map in game_map_dict:
             game = game_map_dict[map](Gamemap)
             agent_num = 2
         else:
             raise ValueError(f"Unknown map: {map}")
-    #     agent_num = 2
     return game, agent_num
-
-
 
 
 if __name__ == "__main__":
