@@ -35,7 +35,7 @@ python visualize_no_note.py #在其基础上精简的可视化工具
 ```
 
 ## 项目结构
-
+- agents: 包含智能体实现，目前有笔直行走的runing的文件
 - algorithm: 包含算法实现，目前有都为空，预期加入HAC算法和PPO算法
 - configs: 配置文件目录，包含 config.json(及第ai的envs自带的config) 和 config.py(模型训练时用到的config，包含模型参数等，目前为空)
 - envs: 包含多个奥林匹克游戏环境实现，如足球、冰球等，从及第ai获取，项目中不会对其操作

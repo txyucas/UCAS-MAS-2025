@@ -7,7 +7,7 @@ from olympics_engine.generator import create_scenario
 import argparse
 from olympics_engine.agent import *
 import time
-
+from agents.runing import straight_agent
 from olympics_engine.scenario import Running, table_hockey, football, wrestling, billiard, \
     curling, billiard_joint, curling_long, curling_competition, Running_competition, billiard_competition, Seeks
 
@@ -71,7 +71,8 @@ if __name__ == "__main__":
         game, agent_num = initialize_game(args.map)
         
         ### 修改这里
-        agent = random_agent()
+        #agent = random_agent()
+        agent= straight_agent()
         rand_agent = random_agent()
 
         obs = game.reset()
@@ -86,8 +87,9 @@ if __name__ == "__main__":
             step += 1
 
             if agent_num == 2:
-                action1, action2 = agent.act(obs[0]), rand_agent.act(obs[1])
-
+                #action1, action2 = agent.act(obs[0]), rand_agent.act(obs[1])
+                action1=agent.act(obs[0])
+                action2=rand_agent.act(obs[1])
                 action = [action1, action2]
             elif agent_num == 1:
                 action1 = agent.act(obs)
