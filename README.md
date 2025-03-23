@@ -10,9 +10,8 @@
 ``` 
 conda create -n MAS
 conda activate MAS
+cd UCAS-MAS-2025
 git clone https://github.com/jidiai/olympics_engine.git
-cd olympics_engine 
-pip install .
 ```
 2. 配置本项目的环境
 ```

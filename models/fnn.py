@@ -25,11 +25,16 @@ class Actor(nn.Module):
             lazy_layers[f'fnnblock_{i}'] = FnnBlock(last_hidden_dim, hidden_dim)
             last_hidden_dim = hidden_dim
         self.fnn_layers = nn.Sequential(lazy_layers)
-        self.fc = nn.Linear(last_hidden_dim, config.output_dim)
+        self.fc = nn.Linear(last_hidden_dim, 2)
+        self.output_activation = nn.Sigmoid()  
     def forward(self, x):
-        x = self.fnn_layers(x)
+        
         x = x.view(x.size(0), -1)
+        x = self.fnn_layers(x)
         x = self.fc(x)
+        x = self.output_activation(x)
+        x[0]=x[0]*30
+        x[1]=x[1]*150+50
         return x
 
 class Critic(nn.Module):
@@ -42,8 +47,10 @@ class Critic(nn.Module):
             last_hidden_dim = hidden_dim
         self.fnn_layers = nn.Sequential(lazy_layers)
         self.fc = nn.Linear(last_hidden_dim, 1)
+        
     def forward(self, x):
-        x = self.fnn_layers(x)
+        
         x = x.view(x.size(0), -1)
+        x = self.fnn_layers(x)
         x = self.fc(x)
         return x
