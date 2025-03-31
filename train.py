@@ -45,7 +45,13 @@ class Trainer:
         self.config = config
         self.random_agent=random_agent()
         # Load the models if paths are provided
+
     def _train_one_step(self):
+        # 保存当前模型状态作为备份
+        if hasattr(self, 'backup_step') and self.backup_step % 20 == 0:
+            self._save_model_checkpoint("backup_actor1.pth", "backup_actor2.pth", 
+                                        "backup_critic1.pth", "backup_critic2.pth")
+        
         self.agent1.reset()
         self.agent2.reset()
         self.agent1.sample_count = 0
@@ -69,6 +75,13 @@ class Trainer:
             self.agent2.update()
             ep_reward_agent1 += reward_agent1
             ep_reward_agent2 += reward_agent2
+            
+            # 检测是否有NaN值出现
+            if self.agent1.isnan or self.agent2.isnan:
+                print("检测到NaN值，尝试从备份恢复...")
+                self._restore_from_checkpoint()
+                return  # 跳过当前步骤
+
             if done:
                 break
         self.agent1.memory.clear()  # 清空缓冲区
@@ -79,6 +92,28 @@ class Trainer:
             "train_reward_agent1": ep_reward_agent1,
             "train_reward_agent2": ep_reward_agent2
         })
+    
+    def _save_model_checkpoint(self, actor1_path, actor2_path, critic1_path, critic2_path):
+        torch.save(self.agent1.actor.state_dict(), actor1_path)
+        torch.save(self.agent2.actor.state_dict(), actor2_path)
+        torch.save(self.agent1.critic.state_dict(), critic1_path)
+        torch.save(self.agent2.critic.state_dict(), critic2_path)
+    
+    def _restore_from_checkpoint(self):
+        try:
+            self.agent1.actor.load_state_dict(torch.load("backup_actor1.pth"))
+            self.agent2.actor.load_state_dict(torch.load("backup_actor2.pth"))
+            self.agent1.critic.load_state_dict(torch.load("backup_critic1.pth"))
+            self.agent2.critic.load_state_dict(torch.load("backup_critic2.pth"))
+            print("成功从备份恢复模型")
+            
+            # 重置优化器状态
+            self.agent1.actor_optimizer = torch.optim.Adam(self.agent1.actor.parameters(), lr=self.agent1.actor_optimizer.param_groups[0]['lr'])
+            self.agent1.critic_optimizer = torch.optim.Adam(self.agent1.critic.parameters(), lr=self.agent1.critic_optimizer.param_groups[0]['lr'])
+            self.agent2.actor_optimizer = torch.optim.Adam(self.agent2.actor.parameters(), lr=self.agent2.actor_optimizer.param_groups[0]['lr'])
+            self.agent2.critic_optimizer = torch.optim.Adam(self.agent2.critic.parameters(), lr=self.agent2.critic_optimizer.param_groups[0]['lr'])
+        except:
+            print("恢复失败，继续使用当前模型")
     
     def _eval_one_batch(self):
         """评估一个批次（两个智能体对抗）"""
@@ -234,4 +269,4 @@ if __name__ == "__main__":
     trainer = Trainer(agent1=agent1, agent2=agent2, config=train_config())
     
     # Start training
-    trainer.training(actor1_path="ckpt.actor1.pth", actor2_path="ckpt.actor2.pth", critic1_path="ckpt.critic1.pth", critic2_path="ckpt.critic2.pth")
+    trainer.training(actor1_path="ckpt/actor1.pth", actor2_path="ckpt/actor2.pth", critic1_path="ckpt/critic1.pth", critic2_path="ckpt/critic2.pth")

@@ -119,10 +119,18 @@ class PPO_Agent:
     def __init__(self, config, istest=True, actor_path=None, critic_path=None):
         self.actor = Actor(config).to(config.device)
         self.critic = Critic(config).to(config.device)
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(),
-                                                lr=config.actor_lr)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(),
-                                                 lr=config.critic_lr)
+        self.actor_optimizer = torch.optim.Adam(
+            self.actor.parameters(),
+            lr=config.actor_lr,
+            eps=1e-5,  # 增加数值稳定性
+            weight_decay=1e-5  # 添加权重衰减
+        )
+        self.critic_optimizer = torch.optim.Adam(
+            self.critic.parameters(),
+            lr=config.critic_lr,
+            eps=1e-5,  # 增加数值稳定性
+            weight_decay=1e-5  # 添加权重衰减
+        )
         self.gamma = config.gamma
         self.lmbda = config.lmbda
         self.k_epochs = config.k_epochs  # 一条序列的数据用来训练轮数
@@ -151,12 +159,17 @@ class PPO_Agent:
             print(f"Critic model loaded from {critic_path}")
 
     def reset(self):
-        """重置历史状态和 LSTM 隐藏状态"""
+        """增强型重置，彻底清除历史状态"""
         self.history = torch.zeros_like(self.history)
         self.actor_h = None
         self.actor_c = None
         self.critic_h = None
         self.critic_c = None
+        # 清空内存缓冲区
+        self.memory.clear()
+        # 重置优化器状态
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.actor_optimizer.param_groups[0]['lr'])
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.critic_optimizer.param_groups[0]['lr'])
 
     def sample_action(self, obs, reward=None, done=False):
         self.isnan=False
@@ -285,6 +298,7 @@ class PPO_Agent:
         if not old_states:  # 如果没有足够的序列数据
             return
 
+
         # 转换状态为张量
         old_states = [state['agent_obs'] for state in old_states]
         old_states_array = np.array(old_states)
@@ -360,19 +374,43 @@ class PPO_Agent:
                 flat_old_log_probs = mini_log_probs.view(-1)
 
                 # 计算损失
-                ratio = torch.exp(new_probs - flat_old_log_probs)
+                ratio = torch.exp(torch.clamp(new_probs - flat_old_log_probs, min=-20, max=20))
+                
+                # 添加数值稳定性检查
+                if torch.isnan(ratio).any() or torch.isinf(ratio).any():
+                    print("警告: ratio包含NaN或Inf，跳过此批次更新")
+                    continue
+                    
                 surr1 = ratio * advantage
                 surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantage
                 actor_loss = -torch.min(surr1, surr2).mean() + self.entropy_coef * dist.entropy().mean()
                 critic_loss = (flat_rewards - values).pow(2).mean()
+                
+                # 检查损失是否为NaN
+                if torch.isnan(actor_loss) or torch.isnan(critic_loss):
+                    print("警告: 损失函数包含NaN值，跳过此批次更新")
+                    continue
 
                 # 累积梯度
                 total_loss = actor_loss + critic_loss
                 total_loss.backward()
+                
+                # 检查梯度是否包含NaN
+                has_nan_grad = False
+                for param in list(self.actor.parameters()) + list(self.critic.parameters()):
+                    if param.grad is not None and torch.isnan(param.grad).any():
+                        has_nan_grad = True
+                        break
+                
+                if has_nan_grad:
+                    print("警告: 梯度包含NaN值，跳过此批次更新")
+                    self.actor_optimizer.zero_grad()
+                    self.critic_optimizer.zero_grad()
+                    continue
 
-                # 梯度裁剪
-                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
-                torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=1.0)
+                # 更严格的梯度裁剪
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=0.5)
+                torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
 
             # 更新参数
             self.actor_optimizer.step()

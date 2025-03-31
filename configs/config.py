@@ -22,8 +22,8 @@ class CnnConfig1:
     #train_config
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     batch_size: int = 32
-    actor_lr: float = 1e-3
-    critic_lr: float = 1e-3
+    actor_lr: float = 4e-4
+    critic_lr: float = 4e-4
 
 @dataclass
 class CnnConfig2:
@@ -46,8 +46,8 @@ class CnnConfig2:
     #train_config
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     batch_size: int = 32
-    actor_lr: float = 1e-3
-    critic_lr: float = 1e-3
+    actor_lr: float = 4e-4
+    critic_lr: float = 4e-4
     
 @dataclass
 class train_config:

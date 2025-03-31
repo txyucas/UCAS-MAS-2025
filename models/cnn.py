@@ -68,11 +68,18 @@ class Actor(nn.Module):
         # 确保输入维度为 (batch_size, seq_len, channels, height, width)
         assert x.dim() == 5, "Input tensor must have 5 dimensions (batch, seq, channel, height, width)"
         
+        x=torch.nan_to_num(x) if x is not None else x
+        x = x.float()
+        noise = torch.empty_like(x).uniform_(-1e-4, 1e-4)
+        x = x + noise
         batch_size, seq_len, c, h, w = x.size()
         x = x.view(batch_size * seq_len, c, h, w)  # 展平时间维度
         x = self.cnn_layers(x)
         x = x.view(batch_size, seq_len, -1)  # 恢复时间维度
-
+        if torch.isnan(x).any():
+            x = torch.zeros_like(x)
+        noise = torch.empty_like(x).uniform_(-1e-4, 1e-4)
+        x = x + noise
 
         # 初始化 h 和 c 为纯零
         if h_state is None or c_state is None:
@@ -87,12 +94,19 @@ class Actor(nn.Module):
             pass
         h_state = torch.nan_to_num(h_state) if h_state is not None else h_state
         c_state = torch.nan_to_num(c_state) if c_state is not None else c_state
-
+        noise= torch.empty_like(h_state).uniform_(-1e-5, 1e-5)
+        h_state = h_state + noise
+        noise= torch.empty_like(c_state).uniform_(-1e-5, 1e-5)
+        c_state = c_state + noise
         # LSTM 处理
         lstm_out, (h_state, c_state) = self.lstm(x, (h_state, c_state))
 
         # 取最后一个时间步的输出
         lstm_out = lstm_out[:, -1, :]
+        
+        if torch.isnan(lstm_out).any():
+            h_state = torch.zeros(1, batch_size, self.lstm_hidden_size, device=x.device)
+            c_state = torch.zeros(1, batch_size, self.lstm_hidden_size, device=x.device)
 
         # 输出均值和标准差
         mu_raw = self.output_activation(self.fc_mu(lstm_out))
