@@ -548,7 +548,7 @@
     "olympics-running": {
       "class_literal": "OlympicsRunning",
       "n_player": 2,
-      "max_step": 500,
+      "max_step": 3000,
       "game_name": "running",
       "is_obs_continuous": true,
       "is_act_continuous": true,
@@ -864,7 +864,7 @@
     "olympics-tablehockey": {
       "class_literal": "OlympicsTablehockey",
       "n_player": 2,
-      "max_step": 500,
+      "max_step": 3000,
       "game_name": "tablehockey",
       "is_obs_continuous": true,
       "is_act_continuous": true,
@@ -874,7 +874,7 @@
     "olympics-football": {
       "class_literal": "OlympicsFootball",
       "n_player": 2,
-      "max_step": 500,
+      "max_step": 3000,
       "game_name": "football",
       "is_obs_continuous": true,
       "is_act_continuous": true,
@@ -884,7 +884,7 @@
     "olympics-wrestling": {
       "class_literal": "OlympicsWrestling",
       "n_player": 2,
-      "max_step": 500,
+      "max_step": 3000,
       "game_name": "wrestling",
       "is_obs_continuous": true,
       "is_act_continuous": true,
@@ -894,7 +894,7 @@
     "olympics-billiard": {
       "class_literal": "OlympicsBilliard",
       "n_player": 2,
-      "max_step": 500,
+      "max_step": 3000,
       "game_name": "billiard",
       "is_obs_continuous": true,
       "is_act_continuous": true,
@@ -994,7 +994,7 @@
     "olympics-curling": {
         "class_literal": "OlympicsCurling",
         "n_player": 2,
-        "max_step": 1000,
+        "max_step": 3000,
         "game_name": "curling",
         "is_obs_continuous": true,
         "is_act_continuous": true,
@@ -1024,7 +1024,7 @@
     "olympics-integrated": {
       "class_literal": "OlympicsIntegrated",
       "n_player": 2,
-      "max_step": 2000,
+      "max_step": 3000,
       "game_name": "integrated",
       "is_obs_continuous": true,
       "is_act_continuous": true,
@@ -1074,7 +1074,7 @@
     "olympics-billiard-competition": {
       "class_literal": "OlympicsBilliardCompetition",
       "n_player": 2,
-      "max_step": 500,
+      "max_step": 3000,
       "game_name": "billiard_competition",
       "is_obs_continuous": true,
       "is_act_continuous": true,
