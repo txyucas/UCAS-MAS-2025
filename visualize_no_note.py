@@ -10,7 +10,7 @@ from olympics_engine.agent import *
 import time
 from olympics_engine.scenario import Running, table_hockey, football, wrestling, billiard, \
     curling, billiard_joint, curling_long, curling_competition, Running_competition, billiard_competition, Seeks
-from agents.running import PPO_Agent
+from agents.PPO import PPO_Agent
 from olympics_engine.AI_olympics import AI_Olympics
 from configs.config import CnnConfig1
 import random

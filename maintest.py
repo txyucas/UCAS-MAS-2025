@@ -21,7 +21,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
-from agents.running import PPO_Agent
+from agents.PPO import PPO_Agent
 from dataclasses import  field
 
 checkpoint_path_dic={}

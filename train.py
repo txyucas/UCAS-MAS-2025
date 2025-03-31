@@ -6,7 +6,7 @@ from olympics_engine.scenario import Running, table_hockey, football, wrestling,
 from olympics_engine.AI_olympics import AI_Olympics
 from configs.config import CnnConfig1, CnnConfig2,train_config
 import wandb
-from agents.running import PPO_Agent
+from agents.PPO import PPO_Agent
 from olympics_engine.agent import *
 game_map_dict = {
     'running': Running,
