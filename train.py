@@ -60,12 +60,23 @@ class Trainer:
         ep_reward_agent2 = 0
         state = self.env.reset()
         torch.cuda.empty_cache()  # 清理 GPU 缓存
+        
+         # 添加步数计数器
+        step_penalty = 1e-2  # 每步惩罚系数（需调整）
+        total_steps = 0
+        
         for _ in range(69 if self.env.game_name == 'curling' else self.config.max_steps):
+            total_steps += 1
             action_agent1 = self.agent1.sample_action(state[0])[0]
             action_agent2 = self.agent2.sample_action(state[1])[0]
             action = [action_agent1, action_agent2]
             next_state, reward, done, _ = self.env.step(action)
-            reward_agent1, reward_agent2 = reward[0], reward[1]
+             # 添加步数惩罚（核心修改）
+            step_punishment = step_penalty * total_steps / self.config.max_steps
+            reward_agent1 = reward[0] - step_punishment 
+            reward_agent2 = reward[1] - step_punishment
+        
+            # reward_agent1, reward_agent2 = reward[0], reward[1]
             reward_agent1 +=0 if agent1.isnan==False else -10
             reward_agent2 +=0 if agent2.isnan==False else -10
             self.agent1.memory.push((state[0], action_agent1, self.agent1.log_probs, reward_agent1, done))
