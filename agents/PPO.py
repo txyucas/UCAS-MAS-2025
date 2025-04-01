@@ -4,6 +4,7 @@ import numpy as np
 from collections import deque
 from models.cnn import Actor, Critic
 from torch.distributions import Categorical
+import os
 
 
 import random
@@ -236,15 +237,36 @@ class PPO_Agent:
         
         return action[0].tolist()
 
-    def compute_advantage(self, gamma, lmbda, td_delta):
-        td_delta = td_delta.detach().numpy()
-        advantage_list = []
-        advantage = 0.0
-        for delta in td_delta[::-1]:
-            advantage = gamma * lmbda * advantage + delta
-            advantage_list.append(advantage)
-        advantage_list.reverse()
-        return torch.tensor(advantage_list, dtype=torch.float)
+    # def compute_advantage(self, gamma, lmbda, td_delta):
+    #     td_delta = td_delta.detach().numpy()
+    #     advantage_list = []
+    #     advantage = 0.0
+    #     for delta in td_delta[::-1]:
+    #         advantage = gamma * lmbda * advantage + delta
+    #         advantage_list.append(advantage)
+    #     advantage_list.reverse()
+    #     return torch.tensor(advantage_list, dtype=torch.float)
+    
+    def compute_advantage(self, rewards, values, dones, last_value):
+        """实现广义优势估计(GAE)"""
+        advantages = torch.zeros_like(rewards)
+        last_advantage = 0
+        last_value = last_value.detach()
+        
+        for t in reversed(range(len(rewards))):
+            if dones[t]:
+                delta = rewards[t] - values[t]
+                last_advantage = 0  # 终止状态不bootstrap
+            else:
+                delta = rewards[t] + self.gamma * last_value - values[t]
+                last_value = values[t]
+                
+            advantages[t] = delta + self.gamma * self.lmbda * last_advantage
+            last_advantage = advantages[t]
+    
+        # 标准化优势函数
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        return advantages
 
     def update_history_sequence(self, states):
         """
@@ -419,7 +441,19 @@ class PPO_Agent:
         # 清空记忆缓冲区
         self.memory.clear()
 
+    # def save_model(self, actor_path, critic_path):
+    #     torch.save(self.actor.state_dict(), actor_path)
+    #     torch.save(self.critic.state_dict(), critic_path)
+    #     print(f"Model saved to {actor_path} and {critic_path}")
+
     def save_model(self, actor_path, critic_path):
-        torch.save(self.actor.state_dict(), actor_path)
-        torch.save(self.critic.state_dict(), critic_path)
-        print(f"Model saved to {actor_path} and {critic_path}")
+        """保存模型并自动创建缺失目录"""
+        def safe_save(path, model):
+            dir_name = os.path.dirname(path)
+            if dir_name:  # 防止空目录名的情况
+                os.makedirs(dir_name, exist_ok=True)  # 关键修改
+            torch.save(model.state_dict(), path)
+            print(f"Model saved to {path}")
+
+        safe_save(actor_path, self.actor)
+        safe_save(critic_path, self.critic)
