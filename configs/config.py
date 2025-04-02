@@ -24,13 +24,6 @@ class CnnConfig1:
     batch_size: int = 32
     actor_lr: float = 4e-4
     critic_lr: float = 4e-4
-    
-     # 新增自博弈相关参数
-    opponent_pool_size: int = 5           # 对手池容量
-    sp_update_interval: int = 50         # 对手池更新间隔（步数）
-    sp_win_threshold: float = 0.65        # 胜率阈值（触发课程学习）
-    sp_replay_ratio: float = 0.6          # 自博弈数据占比
-    policy_noise_std: float = 0.03       # 策略克隆时的噪声标准差
 
 @dataclass
 class CnnConfig2:
@@ -56,13 +49,6 @@ class CnnConfig2:
     actor_lr: float = 4e-4
     critic_lr: float = 4e-4
     
-    # ... 同样修改（参数值可不同）...
-    opponent_pool_size: int = 5
-    sp_update_interval: int = 50
-    sp_win_threshold: float = 0.6
-    sp_replay_ratio: float = 0.55
-    policy_noise_std: float = 0.025
-    
 @dataclass
 class train_config:
     #train_config
@@ -72,10 +58,4 @@ class train_config:
     max_steps: int = 3000
     num_episodes: int = 100
     batch_per_epi:int=30 # 每个回合的批次数
-    
-     # 新增全局训练参数
-    sp_curriculum_rate: float = 1.1      # 课程难度提升倍率
-    grad_clip: float = 0.5               # 梯度裁剪阈值
-    eval_against_pool_eps: int = 3        # 对策略池的评估回合数
-    
     
