@@ -8,13 +8,15 @@ from configs.config import CnnConfig1, CnnConfig2,train_config
 import wandb
 from agents.PPO import PPO_Agent
 from olympics_engine.agent import *
+# import datetime
+# import glob
 game_map_dict = {
-    'running': Running,
-    'table-hockey': table_hockey,
-    'football': football,
-    'wrestling': wrestling,
-    #'billiard': billiard,
-    'curling': curling,
+    # 'running': Running,
+    # 'table-hockey': table_hockey,
+     'football': football,
+    # 'wrestling': wrestling,
+    # #'billiard': billiard,
+    # 'curling': curling,
 }
 
 wandb.init(project="MAS", config=train_config().__dict__, name='MAS_test2')  # 在脚本开始时进行初始化，而不是函数内部
@@ -44,13 +46,63 @@ class Trainer:
         self.agent2=agent2
         self.config = config
         self.random_agent=random_agent()
+        # self.backup_step = 0
+        # self.batch_size = 64  # 每次更新需要积累的步数
+        # self.mini_batch_size = 16  # 每次梯度更新的小批次大小
+        self.step_penalty = 1e-2
         # Load the models if paths are provided
+
+    # def _collect_experiences(self):
+    #     """跨多个episode收集经验，直到达到batch_size"""
+    #     while len(self.agent1.memory) < self.batch_size:
+    #         # 单个episode收集
+    #         state = self.env.reset()
+    #         episode_steps = 0
+    #         done = False
+            
+    #         while not done:
+    #             # 动作采样与环境交互
+    #             action1 = self.agent1.sample_action(state[0])[0]
+    #             action2 = self.agent2.sample_action(state[1])[0]
+    #             next_state, reward, done, _ = self.env.step([action1, action2])
+                
+    #             # 奖励修正（保留原有逻辑）
+    #             step_punishment = self.step_penalty * episode_steps / self.config.max_steps
+    #             reward_agent1 = reward[0] - step_punishment
+    #             reward_agent2 = reward[1] - step_punishment
+                
+    #             # 存储经验（不立即清空！）
+    #             self.agent1.memory.push((state[0], action1, self.agent1.log_probs, reward_agent1, done))
+    #             self.agent2.memory.push((state[1], action2, self.agent2.log_probs, reward_agent2, done))
+                
+    #             state = next_state
+    #             episode_steps +=1
+
+    #             # 仅在episode结束时重置LSTM状态
+    #             if done:
+    #                 self.agent1.reset_lstm()  # 新增方法，仅重置LSTM
+    #                 self.agent2.reset_lstm()
 
     def _train_one_step(self):
         # 保存当前模型状态作为备份
         if hasattr(self, 'backup_step') and self.backup_step % 20 == 0:
             self._save_model_checkpoint("backup_actor1.pth", "backup_actor2.pth", 
                                         "backup_critic1.pth", "backup_critic2.pth")
+        
+        # # 初始化备份计数器
+        # if not hasattr(self, 'backup_step'):
+        #     self.backup_step = 0  # 在__init__中添加更规范
+
+        # # 每20步生成唯一备份文件名
+        # if self.backup_step % 20 == 0:
+        #     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        #     self._save_model_checkpoint(
+        #         f"backup_actor1_step{self.backup_step}_{timestamp}.pth",
+        #         f"backup_actor2_step{self.backup_step}_{timestamp}.pth",
+        #         f"backup_critic1_step{self.backup_step}_{timestamp}.pth",
+        #         f"backup_critic2_step{self.backup_step}_{timestamp}.pth"
+        #     )
+        # self.backup_step +=1
         
         self.agent1.reset()
         self.agent2.reset()
@@ -62,7 +114,6 @@ class Trainer:
         torch.cuda.empty_cache()  # 清理 GPU 缓存
         
          # 添加步数计数器
-        step_penalty = 1e-2  # 每步惩罚系数（需调整）
         total_steps = 0
         
         for _ in range(69 if self.env.game_name == 'curling' else self.config.max_steps):
@@ -72,7 +123,7 @@ class Trainer:
             action = [action_agent1, action_agent2]
             next_state, reward, done, _ = self.env.step(action)
              # 添加步数惩罚（核心修改）
-            step_punishment = step_penalty * total_steps / self.config.max_steps
+            step_punishment = self.step_penalty * total_steps / self.config.max_steps
             reward_agent1 = reward[0] - step_punishment 
             reward_agent2 = reward[1] - step_punishment
         
@@ -126,6 +177,27 @@ class Trainer:
         except:
             print("恢复失败，继续使用当前模型")
     
+    # def _restore_from_checkpoint(self):
+    #     backup_list = glob.glob("backup_actor1_step*.pth")
+    #     if not backup_list:
+    #         print("无可用备份")
+    #         return
+
+    #     # 显示可恢复的备份选项
+    #     print("可恢复的备份版本：")
+    #     for i, path in enumerate(backup_list):
+    #         print(f"{i+1}. {path}")
+
+    #     # 用户选择或自动选最新
+    #     choice = int(input("输入要恢复的版本号：")) -1
+    #     latest_backup = backup_list[choice]
+        
+    #     self.agent1.actor.load_state_dict(torch.load(latest_backup))
+    #     self.agent2.actor.load_state_dict(torch.load(latest_backup))
+    #     self.agent1.critic.load_state_dict(torch.load(latest_backup))
+    #     self.agent2.critic.load_state_dict(torch.load(latest_backup))
+    #     print("成功从备份恢复模型")
+    
     def _eval_one_batch(self):
         """评估一个批次（两个智能体对抗）"""
         with torch.no_grad():
@@ -140,8 +212,8 @@ class Trainer:
                 agent2.reset()
                 eval_reward_agent2 = 0
                 self.env,num_agent=get_random_game(game_map_dict)  # 随机选择游戏地图和智能体数量
-                state = self.env.reset()  # 重置环境
-    
+                state = self.env.reset()  # 重置环境/
+                #self.env.render()
                 for _ in range(65 if self.env.game_name=='curling'else self.config.max_steps ):
                     # 两个智能体分别选择动作
                     action_agent1 = self.agent1.act(state[0])  # 智能体1选择动作

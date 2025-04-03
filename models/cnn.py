@@ -162,28 +162,48 @@ class Critic(nn.Module):
         # 全连接层
         self.fc = nn.Linear(self.lstm_hidden_size, 1)
 
+    # def forward(self, x, h_state=None, c_state=None):
+    #     # 确保输入维度为 (batch_size, seq_len, channels, height, width)
+        
+    #     batch_size, seq_len, c, h, w = x.size()
+    #     x = x.view(batch_size * seq_len, c, h, w)  # 展平时间维度
+    #     x = self.cnn_layers(x)
+    #     x = x.view(batch_size, seq_len, -1)  # 恢复时间维度
+
+    #     # 初始化 h 和 c 为纯零
+    #     if h_state is None or c_state is None:
+
+    #         h_state = torch.zeros(1, batch_size, self.lstm_hidden_size, device=x.device)
+    #         c_state = torch.zeros(1, batch_size, self.lstm_hidden_size, device=x.device)
+    #     h_state = torch.nan_to_num(h_state) if h_state is not None else h_state
+    #     c_state = torch.nan_to_num(c_state) if c_state is not None else c_state
+
+    #     # LSTM 处理
+    #     lstm_out, (h_state, c_state) = self.lstm(x, (h_state, c_state))
+
+    #     # 取最后一个时间步的输出
+    #     lstm_out = lstm_out[:, -1, :]
+
+    #     # 输出值
+    #     x = self.fc(lstm_out)
+    #     return x[:, 0], (h_state, c_state)  # 返回一维张量和新的隐藏状态
     def forward(self, x, h_state=None, c_state=None):
         # 确保输入维度为 (batch_size, seq_len, channels, height, width)
-        
         batch_size, seq_len, c, h, w = x.size()
         x = x.view(batch_size * seq_len, c, h, w)  # 展平时间维度
         x = self.cnn_layers(x)
-        x = x.view(batch_size, seq_len, -1)  # 恢复时间维度
+        x = x.view(batch_size, seq_len, -1)  # 恢复为 (batch, seq, features)
 
-        # 初始化 h 和 c 为纯零
+        # 初始化 LSTM 隐藏状态
         if h_state is None or c_state is None:
-
             h_state = torch.zeros(1, batch_size, self.lstm_hidden_size, device=x.device)
             c_state = torch.zeros(1, batch_size, self.lstm_hidden_size, device=x.device)
-        h_state = torch.nan_to_num(h_state) if h_state is not None else h_state
-        c_state = torch.nan_to_num(c_state) if c_state is not None else c_state
 
-        # LSTM 处理
-        lstm_out, (h_state, c_state) = self.lstm(x, (h_state, c_state))
+        # LSTM 处理所有时间步
+        lstm_out, (h_state, c_state) = self.lstm(x, (h_state, c_state))  # lstm_out 形状: (batch, seq, hidden_size)
 
-        # 取最后一个时间步的输出
-        lstm_out = lstm_out[:, -1, :]
+        # 为每个时间步生成值函数
+        values = self.fc(lstm_out)          # 形状: (batch, seq, 1)
+        values = values.squeeze(-1)        # 形状: (batch, seq)
 
-        # 输出值
-        x = self.fc(lstm_out)
-        return x[:, 0], (h_state, c_state)  # 返回一维张量和新的隐藏状态
+        return values, (h_state, c_state)  # 返回所有时间步的值和隐藏状态

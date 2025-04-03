@@ -193,8 +193,8 @@ class PPO_Agent:
         mu, sigma, (self.actor_h, self.actor_c) = self.actor(sequence, self.actor_h, self.actor_c, istest=False)
 
             
-        # 对分布参数进行约束
-        sigma = torch.clamp(sigma, min=1e-3, max=1.0)
+        # # 对分布参数进行约束
+        # sigma = torch.clamp(sigma, min=1e-3, max=1.0)
 
         # 检查分布参数是否异常
         if torch.isnan(mu).any() or torch.isnan(sigma).any() or torch.isinf(mu).any() or torch.isinf(sigma).any():
@@ -308,24 +308,50 @@ class PPO_Agent:
     #     advantage_list.reverse()
     #     return torch.tensor(advantage_list, dtype=torch.float)
     
+    # def compute_advantage(self, rewards, values, dones, last_value):
+    #     """实现广义优势估计(GAE)"""
+    #     advantages = torch.zeros_like(rewards)
+    #     last_advantage = 0
+    #     last_value = last_value.detach()
+        
+    #     for t in reversed(range(len(rewards))):
+    #         if dones[t]:
+    #             delta = rewards[t] - values[t]
+    #             last_advantage = 0  # 终止状态不bootstrap
+    #         else:
+    #             delta = rewards[t] + self.gamma * last_value - values[t]
+    #             last_value = values[t]
+                
+    #         advantages[t] = delta + self.gamma * self.lmbda * last_advantage
+    #         last_advantage = advantages[t]
+    
+    #     # 标准化优势函数
+    #     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    #     return advantages
+    
     def compute_advantage(self, rewards, values, dones, last_value):
-        """实现广义优势估计(GAE)"""
+        """广义优势估计（GAE），支持批量处理"""
+        batch_size, seq_len = rewards.shape
         advantages = torch.zeros_like(rewards)
         last_advantage = 0
-        last_value = last_value.detach()
-        
-        for t in reversed(range(len(rewards))):
-            if dones[t]:
-                delta = rewards[t] - values[t]
-                last_advantage = 0  # 终止状态不bootstrap
-            else:
-                delta = rewards[t] + self.gamma * last_value - values[t]
-                last_value = values[t]
-                
-            advantages[t] = delta + self.gamma * self.lmbda * last_advantage
-            last_advantage = advantages[t]
-    
-        # 标准化优势函数
+        last_value = last_value.detach()  # 初始化为终止状态的value（如0）
+
+        # 逆时序处理每个时间步
+        for t in reversed(range(seq_len)):
+            # 获取当前时间步的mask（未终止时为1）
+            mask = 1.0 - dones[:, t].float()
+
+            # 计算delta: δ_t = r_t + γ * V(s_{t+1}) - V(s_t)
+            delta = rewards[:, t] + self.gamma * last_value * mask - values[:, t]
+
+            # 更新优势: A_t = δ_t + γλ * A_{t+1}
+            advantages[:, t] = delta + self.gamma * self.lmbda * mask * last_advantage
+
+            # 保存当前优势值和状态值
+            last_advantage = advantages[:, t]
+            last_value = values[:, t]
+
+        # 标准化优势函数（按批次）
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         return advantages
 
@@ -379,7 +405,7 @@ class PPO_Agent:
         return self.history
 
     def update(self):
-        # update policy every n steps
+        # update policy every n steps，只在达到更新频率才更新
         if self.sample_count % self.update_freq != 0:
             return
 
@@ -410,15 +436,46 @@ class PPO_Agent:
             c, h, w = old_states_array.shape[1:]
             old_states = torch.tensor(old_states_array, device=self.device, dtype=torch.float)
             old_states = old_states.view(batch_size, seq_len, c, h, w)
-
-        # 处理其他张量
+        
+        with torch.no_grad():
+            # 展平时序维度 (batch_size*seq_len, ...)
+            # flat_states = old_states.view(-1, *old_states.shape[2:])
+            # values, _ = self.critic(flat_states)
+            values, _ = self.critic(old_states)
+            # 恢复为 (batch_size, seq_len)
+            if values.dim() == 3 and values.shape[-1] == 1:
+                values = values.squeeze(-1)
+            values = values.view(batch_size, seq_len)
+        
+        # # 处理其他张量
+        # old_actions = torch.tensor(np.array(old_actions), device=self.device, dtype=torch.float)
+        # old_actions = old_actions.view(batch_size, seq_len, -1)
+        # old_rewards = torch.tensor(old_rewards, device=self.device, dtype=torch.float)
+        # old_dones = torch.tensor(old_dones, device=self.device, dtype=torch.float)
+        # old_log_probs = torch.tensor(old_log_probs, device=self.device, dtype=torch.float)
+        # old_log_probs = old_log_probs.view(batch_size, seq_len)
+        
         old_actions = torch.tensor(np.array(old_actions), device=self.device, dtype=torch.float)
-        old_actions = old_actions.view(batch_size, seq_len, -1)
+        old_actions = old_actions.view(batch_size, seq_len, -1)  # (batch, seq, action_dim)
+
+        # 重塑 rewards 和 dones 为二维 (batch, seq)
         old_rewards = torch.tensor(old_rewards, device=self.device, dtype=torch.float)
+        old_rewards = old_rewards.view(batch_size, seq_len)  # 新增：确保二维
+
         old_dones = torch.tensor(old_dones, device=self.device, dtype=torch.float)
+        old_dones = old_dones.view(batch_size, seq_len)       # 新增：确保二维
+
         old_log_probs = torch.tensor(old_log_probs, device=self.device, dtype=torch.float)
         old_log_probs = old_log_probs.view(batch_size, seq_len)
 
+        advantages = self.compute_advantage(
+            rewards=old_rewards,
+            values=values,
+            dones=old_dones,
+            last_value=torch.zeros(batch_size, device=self.device)  # 假设后续状态value为0
+        )
+        
+        
         # 梯度累积参数
         accumulation_steps = self.k_epochs  # 将一个大批次分成多个小批次
         mini_batch_size = max(1, batch_size // accumulation_steps)
@@ -434,18 +491,19 @@ class PPO_Agent:
                 end_idx = start_idx + mini_batch_size
                 mini_states = old_states[start_idx:end_idx]
                 mini_actions = old_actions[start_idx:end_idx]
-                mini_rewards = old_rewards[start_idx:end_idx]
+                # mini_rewards = old_rewards[start_idx:end_idx]
+                mini_advantages = advantages[start_idx:end_idx].view(-1)
                 mini_log_probs = old_log_probs[start_idx:end_idx]
 
                 # 跳过空批次
                 if mini_states.size(0) == 0:
                     continue
 
-                # 前向传播 Critic
-                values, _ = self.critic(mini_states)
-                values = values.view(-1)
-                flat_rewards = mini_rewards.view(-1)
-                advantage = flat_rewards - values.detach()
+                # # 前向传播 Critic
+                # values, _ = self.critic(mini_states)
+                # values = values.view(-1)
+                # flat_rewards = mini_rewards.view(-1)
+                # advantage = flat_rewards - values.detach()    # 这里的优势函数可以用GAE 
 
                 # 前向传播 Actor
                 mu, sigma, _ = self.actor(mini_states, istest=False)
@@ -471,10 +529,17 @@ class PPO_Agent:
                     print("警告: ratio包含NaN或Inf，跳过此批次更新")
                     continue
                     
-                surr1 = ratio * advantage
-                surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantage
+                # surr1 = ratio * advantage
+                surr1 = ratio * mini_advantages
+                # surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantage
+                surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * mini_advantages
                 actor_loss = -torch.min(surr1, surr2).mean() + self.entropy_coef * dist.entropy().mean()
-                critic_loss = (flat_rewards - values).pow(2).mean()
+                
+                 # 重新计算当前mini_batch的values（动态更新Critic）
+                current_values, _ = self.critic(mini_states)
+                current_values = current_values.view(-1)
+                critic_loss = (current_values - (mini_advantages + values.detach())).pow(2).mean()
+                # critic_loss = (flat_rewards - values).pow(2).mean()
                 
                 # 检查损失是否为NaN
                 if torch.isnan(actor_loss) or torch.isnan(critic_loss):
