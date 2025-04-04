@@ -11,12 +11,12 @@ from olympics_engine.agent import *
 # import datetime
 # import glob
 game_map_dict = {
-    # 'running': Running,
-    # 'table-hockey': table_hockey,
+     'running': Running,
+     'table-hockey': table_hockey,
      'football': football,
-    # 'wrestling': wrestling,
+     'wrestling': wrestling,
     # #'billiard': billiard,
-    # 'curling': curling,
+     'curling': curling,
 }
 
 wandb.init(project="MAS", config=train_config().__dict__, name='MAS_test2')  # 在脚本开始时进行初始化，而不是函数内部

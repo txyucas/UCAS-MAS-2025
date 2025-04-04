@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from collections import deque
-from models.cnn import Actor, Critic
+from models.cnn import Actor, Critic, HighLevelManager, LowLevelWorker
 from torch.distributions import Categorical
 import os
 import random
@@ -590,3 +590,87 @@ class PPO_Agent:
 
         safe_save(actor_path, self.actor)
         safe_save(critic_path, self.critic)
+
+
+
+
+
+
+
+
+
+class HierarchicalReplay(SequentialPGReplay):
+    def __init__(self, sequence_length=8):
+        super().__init__(sequence_length)
+        self.high_buffer = []  # 存储高层经验
+        
+    def push(self, transition):
+        # 原有底层经验存储
+        super().push(transition)
+        
+        # 高层经验存储（每N步）
+        if transition['is_high']:  # 需在外部标记是否为高层决策步
+            self.high_buffer.append({
+                'state': transition[0],
+                'subgoal': transition['subgoal'],
+                'high_reward': transition['high_reward']
+            })
+    
+    def sample_high(self):
+        # 高层数据采样（完整序列）
+        batch = list(self.high_buffer)
+        return zip(*[(item['state'], item['subgoal'], item['high_reward']) for item in batch])
+
+class HierarchicalPPOAgent(PPO_Agent):
+    def __init__(self, config, istest=True, actor_path=None, critic_path=None):
+        super().__init__(config, istest, actor_path, critic_path)
+        # 替换原有网络
+        self.manager = HighLevelManager(config).to(config.device)
+        self.worker = LowLevelWorker(config).to(config.device)
+        self.manager_optimizer = torch.optim.Adam(self.manager.parameters(), lr=config.actor_lr)
+        
+        # 新增高层Critic
+        self.manager_critic = Critic(config).to(config.device)
+        self.manager_critic_optimizer = torch.optim.Adam(self.manager_critic.parameters(), lr=config.critic_lr)
+        
+        # 分层参数
+        self.subgoal_dim = config.subgoal_dim  # 子目标维度
+        self.subgoal_steps = config.subgoal_steps  # 子目标更新频率（如每10步）
+        
+    def sample_action(self, obs, reward=None, done=False):
+        # 历史状态处理（保持原有逻辑）
+        state = torch.tensor(obs['agent_obs'], dtype=torch.float).to(self.device)
+        state = state.unsqueeze(0)
+        sequence = self.update_history_sequence(state)
+        
+        # 每N步生成新子目标
+        if self.sample_count % self.subgoal_steps == 0:
+            with torch.no_grad():
+                self.current_subgoal, (self.manager_h, self.manager_c) = self.manager(
+                    sequence.unsqueeze(0),  # 添加batch维度
+                    self.manager_h, 
+                    self.manager_c
+                )
+        
+        # 底层动作生成（输入子目标）
+        mu, sigma, (self.actor_h, self.actor_c) = self.worker(
+            sequence, 
+            self.current_subgoal.detach(),  # 分离梯度
+            self.actor_h, 
+            self.actor_c
+        )
+        
+        # 后续动作处理（保持原有截断逻辑）
+        action = self._postprocess_action(mu, sigma)
+        return action
+    
+    def _compute_rewards(self, batch):
+        # 底层奖励 = 环境奖励 + 子目标对齐奖励
+        env_rewards = batch['env_reward']
+        subgoal_alignment = torch.norm(batch['achieved_goal'] - batch['subgoal'], dim=1)
+        low_rewards = env_rewards * 0.8 + (1 - subgoal_alignment) * 0.2
+        
+        # 高层奖励 = 子目标完成度
+        high_rewards = (subgoal_alignment < 0.1).float()  # 示例：子目标误差小于0.1时奖励1
+        
+        return low_rewards, high_rewards

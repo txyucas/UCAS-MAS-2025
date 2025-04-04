@@ -207,3 +207,64 @@ class Critic(nn.Module):
         values = values.squeeze(-1)        # 形状: (batch, seq)
 
         return values, (h_state, c_state)  # 返回所有时间步的值和隐藏状态
+    
+
+# 在原有Actor基础上新增 HighLevelManager
+class HighLevelManager(nn.Module):
+    """高层策略网络，生成子目标（连续向量）"""
+    def __init__(self, config):
+        super().__init__()
+        # 共享底层CNN特征提取器（与Actor相同结构）
+        self.cnn_layers = Actor(config).cnn_layers  # 直接复用Actor的CNN部分
+        
+        # LSTM参数
+        self.lstm = nn.LSTM(
+            input_size=config.lstm_hidden_size,  # 与Actor的LSTM hidden size一致
+            hidden_size=config.manager_lstm_size,
+            batch_first=True
+        )
+        
+        # 子目标生成层
+        self.goal_fc = nn.Sequential(
+            nn.Linear(config.manager_lstm_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, config.subgoal_dim)  # subgoal_dim=2 (示例维度)
+        )
+
+    def forward(self, x, h_state=None, c_state=None):
+        # 输入x形状: (batch, seq_len, c, h, w)
+        batch_size, seq_len = x.shape[0], x.shape[1]
+        
+        # CNN特征提取（与Actor共享）
+        x = x.view(batch_size * seq_len, *x.shape[2:])  # (batch*seq, c, h, w)
+        cnn_features = self.cnn_layers(x)
+        cnn_features = cnn_features.view(batch_size, seq_len, -1)  # (batch, seq, features)
+        
+        # LSTM处理
+        if h_state is None:
+            h_state = torch.zeros(1, batch_size, self.lstm.hidden_size, device=x.device)
+            c_state = torch.zeros(1, batch_size, self.lstm.hidden_size, device=x.device)
+        lstm_out, (h_state, c_state) = self.lstm(cnn_features, (h_state, c_state))
+        
+        # 生成子目标
+        subgoal = self.goal_fc(lstm_out[:, -1, :])  # 取最后一个时间步
+        return subgoal, (h_state, c_state)
+
+# 修改原有Actor为LowLevelWorker
+class LowLevelWorker(nn.Module):
+    """底层策略网络，接收子目标生成动作"""
+    def __init__(self, config):
+        super().__init__()
+        # 保持原有Actor结构，但修改输入维度
+        self.cnn_layers = Actor(config).cnn_layers
+        
+        # 扩展LSTM输入：原特征 + 子目标
+        self.lstm = nn.LSTM(
+            input_size=config.lstm_hidden_size + config.subgoal_dim,  # 新增子目标维度
+            hidden_size=config.lstm_hidden_size,
+            batch_first=True
+        )
+        
+        # 保持原有输出层
+        self.fc_mu = nn.Linear(config.lstm_hidden_size, 2)
+        self.fc_std = nn.Linear(config.lstm_hidden_size, 2)
