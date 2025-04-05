@@ -462,31 +462,39 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from collections import deque
-from models.cnn import Actor, Critic
+from models.cnn import Actor, Critic, HighLevelManager, LowLevelWorker
 from torch.distributions import Categorical
 import os
-
-
 import random
 from collections import deque
+
+
 class ReplayBufferQue:
     '''DQN的经验回放池，每次采样batch_size个样本'''
     def __init__(self, capacity: int) -> None:
-        self.capacity = capacity
+        self.capacity = capacity  
         self.buffer = deque(maxlen=self.capacity)
+        # buffer是一个队列，里面的元素是一个五元组(obs,action,log_prob,reward,done)
+        # 其中log_prob:动作的对数概率（重要性采样关键）
+        # done:回合是否终止
+    
+    # 添加单条经验
     def push(self,transitions):
         '''_summary_
         Args:
             trainsitions (tuple): _description_
         '''
         self.buffer.append(transitions)
+    
     def sample(self, batch_size: int, sequential: bool = False):
+        #保证采样个数不大于回放池中的样本数
         if batch_size > len(self.buffer):
             batch_size = len(self.buffer)
-        if sequential: # sequential sampling
-            rand = random.randint(0, len(self.buffer) - batch_size)
+        if sequential: # sequential sampling  顺序采样，连采batchsize个
+            rand = random.randint(0, len(self.buffer) - batch_size) # 这是通过限制采样的起始点来确保采样终点的索引在范围内
             batch = [self.buffer[i] for i in range(rand, rand + batch_size)]
             return zip(*batch)
+            # 返回一个元组，元组的每一个元素是一种属性的列表
         else:
             batch = random.sample(self.buffer, batch_size)
             return zip(*batch)
@@ -495,6 +503,7 @@ class ReplayBufferQue:
     def __len__(self):
         return len(self.buffer)
 
+# 专门策略梯度算法设计的回放池，将采样全部经验
 class PGReplay(ReplayBufferQue):
     '''PG的经验回放池，每次采样所有样本，因此只需要继承ReplayBufferQue，重写sample方法即可
     '''
@@ -510,9 +519,9 @@ class SequentialPGReplay:
     '''专为序列数据设计的经验回放池，保持时间连续性'''
     def __init__(self, sequence_length=8):
         self.buffer = []
-        self.sequence_length = sequence_length
-        self.current_episode = []
-        self.episodes = []
+        self.sequence_length = sequence_length    #每个训练序列的长度（如8帧）
+        self.current_episode = []    #当前正在收集的回合，临时存储当前回合的连续经验。
+        self.episodes = []     # 已完成的完整回合列表，只保存长度 ≥ sequence_length 的完整回合。他是一个列表，元素是一个回合的数据是一个列表，列表的每个元素是五元组。
     
     def push(self, transition):
         '''存储一个转换，并构建完整回合
@@ -538,6 +547,7 @@ class SequentialPGReplay:
     
     def sample(self):
         '''采样时序连续的完整序列'''
+        # 如果self.episodes为空，没法采样，直接返回空列表
         if not self.episodes:
             return [], [], [], [], []
             
@@ -552,7 +562,7 @@ class SequentialPGReplay:
         for episode in self.episodes:
             # 如果回合长度足够，可以提取多个重叠序列
             if len(episode) >= self.sequence_length:
-                # 从回合中提取连续序列（可重叠）
+                # 从回合中提取连续序列（可重叠），这里就是顺序采样了，因为要的是连续的数据
                 max_start_idx = len(episode) - self.sequence_length
                 start_idx = random.randint(0, max_start_idx)
                 sequence = episode[start_idx:start_idx + self.sequence_length]
@@ -585,7 +595,7 @@ class PPO_Agent:
             self.actor.parameters(),
             lr=config.actor_lr,
             eps=1e-5,  # 增加数值稳定性
-            weight_decay=1e-5  # 添加权重衰减
+            weight_decay=1e-5  # 添加权重衰减，L2正则化系数，防止过拟合（真的要防止吗？）
         )
         self.critic_optimizer = torch.optim.Adam(
             self.critic.parameters(),
@@ -593,15 +603,14 @@ class PPO_Agent:
             eps=1e-5,  # 增加数值稳定性
             weight_decay=1e-5  # 添加权重衰减
         )
-        self.config = config
-        self.gamma = config.gamma
-        self.lmbda = config.lmbda
+        self.gamma = config.gamma   #折扣因子
+        self.lmbda = config.lmbda   #GAE参数
         self.k_epochs = config.k_epochs  # 一条序列的数据用来训练轮数
         self.device = config.device
         
-        self.eps_clip = config.eps_clip
-        self.entropy_coef = config.entropy_coef # entropy coefficient
-        self.update_freq = config.update_freq
+        self.eps_clip = config.eps_clip     #PPO截断阈值
+        self.entropy_coef = config.entropy_coef # entropy coefficient， 熵奖励系数
+        self.update_freq = config.update_freq #策略更新频率
         self.sample_count = 0
 
         # 历史状态缓存，用于构造序列输入
@@ -613,13 +622,7 @@ class PPO_Agent:
         self.actor_c = None
         self.critic_h = None
         self.critic_c = None
-        self.opponent_pool = deque(maxlen=5)  # 对手策略池
-        self.sp_update_interval = 50          # 对手池更新间隔
-        self.sp_win_rate_threshold = 0.65     # 胜率阈值
-        
-        # 对手池初始化
-        self._init_opponent_pool()
-        
+        # 这说明了如果一个模型很烂，得删掉重新训
         if actor_path is not None:
             self.actor.load_state_dict(torch.load(actor_path))
             print(f"Actor model loaded from {actor_path}")
@@ -670,17 +673,17 @@ class PPO_Agent:
                 opp_action = opponent(opp_obs_tensor) 
             augmented_obs['opponent_action'] = opp_action
         self.isnan=False
-        self.sample_count += 1
+        self.sample_count += 1    # 统计采样次数，用于控制策略更新频率（如每N步更新一次）。
         state = torch.tensor(obs['agent_obs'], dtype=torch.float).to(self.device)
         state = state.unsqueeze(0)  # 添加 batch 维度
-        sequence = self.update_history_sequence(state)
+        sequence = self.update_history_sequence(state) # 更新历史状态序列（用于时序模型如LSTM），返回包含最近 max_sqe_len 个状态的序列。
         
         # 生成动作分布
         mu, sigma, (self.actor_h, self.actor_c) = self.actor(sequence, self.actor_h, self.actor_c, istest=False)
 
             
-        # 对分布参数进行约束
-        sigma = torch.clamp(sigma, min=1e-3, max=1.0)
+        # # 对分布参数进行约束
+        # sigma = torch.clamp(sigma, min=1e-3, max=1.0)
 
         # 检查分布参数是否异常
         if torch.isnan(mu).any() or torch.isnan(sigma).any() or torch.isinf(mu).any() or torch.isinf(sigma).any():
@@ -712,34 +715,77 @@ class PPO_Agent:
         # return super().sample_action(augmented_obs, reward, done)
         return action_np.tolist()
 
-    def _augment_observation(self, raw_obs):
-        """增强观测信息，添加对手相关数据"""
-        return {
-            'agent_obs': raw_obs['agent_obs'],
-            'opponent_obs': raw_obs.get('opponent_obs', np.zeros_like(raw_obs['agent_obs'])),
-            'opponent_action': np.zeros(2)  # 初始化为零向量
-        }
-
-    @torch.no_grad()
-    def act(self, obs):
+    # @torch.no_grad()
+    # def act(self, obs):
+    #     state = torch.tensor(obs['agent_obs'], dtype=torch.float).to(self.device)
+    #     state = state.unsqueeze(0)  # 添加 batch 维度
+    #     sequence = self.update_history_sequence(state)
+    #     mu, sigma, (self.actor_h, self.actor_c) = self.actor(sequence, self.actor_h, self.actor_c)
+    #     self.isnan=False
+    #     if torch.isnan(mu).any() or torch.isnan(sigma).any() or torch.isinf(mu).any() or torch.isinf(sigma).any():
+    #         self.isnan=True
+    #         print("警告: 动作分布包含异常值，重置为默认值")
+    #         mu = torch.zeros_like(mu)
+    #         sigma = torch.ones_like(sigma) * 0.1
+    #     action_dist = torch.distributions.Normal(mu, sigma)
+    #     action = action_dist.sample()
+    #     action = action.cpu().numpy()
+        
+        
+        # # 添加截断逻辑
+        # action[0, 1] = np.clip(action[0, 1], -30, 30)  # 第一维范围限制为 [-30, 30]
+        # action[0, 0] = np.clip(action[0,0], -100, 200)  # 第二维范围限制为 [-100, 200]
+        
+        # return action[0].tolist()
+        
+    def act(self, obs, test_mode=False, exploration_scale=0.3):
+        """
+        改进版动作采样函数，针对稀疏奖励和连续动作空间优化
+        参数：
+            obs: 环境观测字典，必须包含'agent_obs'键
+            test_mode: 测试模式开关，True时关闭探索噪声
+            exploration_scale: 初始探索强度系数(0.1~0.5)
+        返回：
+            list: 2D动作 [action_dim1, action_dim2]
+        """
+        # 状态预处理
         state = torch.tensor(obs['agent_obs'], dtype=torch.float).to(self.device)
-        state = state.unsqueeze(0)  # 添加 batch 维度
-        sequence = self.update_history_sequence(state)
-        mu, sigma, (self.actor_h, self.actor_c) = self.actor(sequence, self.actor_h, self.actor_c)
-        self.isnan=False
-        if torch.isnan(mu).any() or torch.isnan(sigma).any() or torch.isinf(mu).any() or torch.isinf(sigma).any():
-            self.isnan=True
-            print("警告: 动作分布包含异常值，重置为默认值")
-            mu = torch.zeros_like(mu)
-            sigma = torch.ones_like(sigma) * 0.1
-        action_dist = torch.distributions.Normal(mu, sigma)
-        action = action_dist.sample()
+        state = state.unsqueeze(0)  # 添加batch维度 [1, ...]
+        
+        # 获取动作分布
+        with torch.no_grad():
+            mu, sigma, (self.actor_h, self.actor_c) = self.actor(
+                self.update_history_sequence(state),
+                self.actor_h, self.actor_c
+            )
+            
+            # 约束标准差范围并检查异常
+            sigma = torch.clamp(sigma, min=1e-3, max=1.0)
+            if torch.isnan(mu).any() or torch.isnan(sigma).any():
+                self.isnan = True
+                print("警告: 动作分布异常，使用安全动作")
+                mu = torch.zeros_like(mu)
+                sigma = torch.ones_like(sigma) * 0.1
+            else:
+                self.isnan = False
+
+        # 稀疏奖励环境专用探索策略
+        if not test_mode:
+            # 自适应探索噪声（训练步数越多噪声越小）
+            decay_factor = max(0.1, 1 - self.sample_count / 2e6)  # 200万步衰减到10%
+            noise = exploration_scale * decay_factor * torch.randn_like(mu) * sigma
+            
+            # 对关键维度加强探索（示例：第2维度）
+            noise[:, 1] *= 1.5  # 第2维度的探索强度增加50%
+            
+            action = mu + noise
+        else:
+            action = mu  # 测试模式直接使用均值
+
+        # 动作截断（根据环境物理限制）
         action = action.cpu().numpy()
-        
-        
-        # 添加截断逻辑
-        action[0, 1] = np.clip(action[0, 1], -30, 30)  # 第一维范围限制为 [-30, 30]
-        action[0, 0] = np.clip(action[0,0], -100, 200)  # 第二维范围限制为 [-100, 200]
+        action[0, 0] = np.clip(action[0, 0], -100, 200)  # 第一维限制
+        action[0, 1] = np.clip(action[0, 1], -30, 30)    # 第二维限制
         
         return action[0].tolist()
 
@@ -753,24 +799,50 @@ class PPO_Agent:
     #     advantage_list.reverse()
     #     return torch.tensor(advantage_list, dtype=torch.float)
     
+    # def compute_advantage(self, rewards, values, dones, last_value):
+    #     """实现广义优势估计(GAE)"""
+    #     advantages = torch.zeros_like(rewards)
+    #     last_advantage = 0
+    #     last_value = last_value.detach()
+        
+    #     for t in reversed(range(len(rewards))):
+    #         if dones[t]:
+    #             delta = rewards[t] - values[t]
+    #             last_advantage = 0  # 终止状态不bootstrap
+    #         else:
+    #             delta = rewards[t] + self.gamma * last_value - values[t]
+    #             last_value = values[t]
+                
+    #         advantages[t] = delta + self.gamma * self.lmbda * last_advantage
+    #         last_advantage = advantages[t]
+    
+    #     # 标准化优势函数
+    #     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    #     return advantages
+    
     def compute_advantage(self, rewards, values, dones, last_value):
-        """实现广义优势估计(GAE)"""
+        """广义优势估计（GAE），支持批量处理"""
+        batch_size, seq_len = rewards.shape
         advantages = torch.zeros_like(rewards)
         last_advantage = 0
-        last_value = last_value.detach()
-        
-        for t in reversed(range(len(rewards))):
-            if dones[t]:
-                delta = rewards[t] - values[t]
-                last_advantage = 0  # 终止状态不bootstrap
-            else:
-                delta = rewards[t] + self.gamma * last_value - values[t]
-                last_value = values[t]
-                
-            advantages[t] = delta + self.gamma * self.lmbda * last_advantage
-            last_advantage = advantages[t]
-    
-        # 标准化优势函数
+        last_value = last_value.detach()  # 初始化为终止状态的value（如0）
+
+        # 逆时序处理每个时间步
+        for t in reversed(range(seq_len)):
+            # 获取当前时间步的mask（未终止时为1）
+            mask = 1.0 - dones[:, t].float()
+
+            # 计算delta: δ_t = r_t + γ * V(s_{t+1}) - V(s_t)
+            delta = rewards[:, t] + self.gamma * last_value * mask - values[:, t]
+
+            # 更新优势: A_t = δ_t + γλ * A_{t+1}
+            advantages[:, t] = delta + self.gamma * self.lmbda * mask * last_advantage
+
+            # 保存当前优势值和状态值
+            last_advantage = advantages[:, t]
+            last_value = values[:, t]
+
+        # 标准化优势函数（按批次）
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         return advantages
 
@@ -784,7 +856,7 @@ class PPO_Agent:
         返回:
             torch.Tensor: 包含历史序列的张量，形状为 (batch_size, seq_len, channels, height, width)。
         """
-        if  states==None:
+        if  states is None:
             return self.history  # 如果状态为None，直接返回历史
         elif  len(states.shape) == 1 or len(states.shape) == 2:
             return self.history  # 如果状态是单一维度，直接返回历史
@@ -813,11 +885,18 @@ class PPO_Agent:
         # 更新历史序列
         self.history = torch.roll(self.history, shifts=-1, dims=1)  # 将历史序列向左滚动
         self.history[:, -1] = states  # 更新最新的状态到历史序列的最后一位
-
+        '''
+        torch.roll(..., shifts=-1, dims=1)：
+        沿序列维度（dims=1）向左滚动一位，丢弃最旧的状态。
+        例如：原序列 [s1, s2, s3] → [s2, s3, s3]（末尾重复，但下一步覆盖）。
+        self.history[:, -1] = states：
+        将最新状态 states 写入序列最后一个位置。
+        最终结果如 [s2, s3, s_new]。
+        '''
         return self.history
 
     def update(self):
-        # update policy every n steps
+        # update policy every n steps，只在达到更新频率才更新
         if self.sample_count % self.update_freq != 0:
             return
 
@@ -848,15 +927,46 @@ class PPO_Agent:
             c, h, w = old_states_array.shape[1:]
             old_states = torch.tensor(old_states_array, device=self.device, dtype=torch.float)
             old_states = old_states.view(batch_size, seq_len, c, h, w)
-
-        # 处理其他张量
+        
+        with torch.no_grad():
+            # 展平时序维度 (batch_size*seq_len, ...)
+            # flat_states = old_states.view(-1, *old_states.shape[2:])
+            # values, _ = self.critic(flat_states)
+            values, _ = self.critic(old_states)
+            # 恢复为 (batch_size, seq_len)
+            if values.dim() == 3 and values.shape[-1] == 1:
+                values = values.squeeze(-1)
+            values = values.view(batch_size, seq_len)
+        
+        # # 处理其他张量
+        # old_actions = torch.tensor(np.array(old_actions), device=self.device, dtype=torch.float)
+        # old_actions = old_actions.view(batch_size, seq_len, -1)
+        # old_rewards = torch.tensor(old_rewards, device=self.device, dtype=torch.float)
+        # old_dones = torch.tensor(old_dones, device=self.device, dtype=torch.float)
+        # old_log_probs = torch.tensor(old_log_probs, device=self.device, dtype=torch.float)
+        # old_log_probs = old_log_probs.view(batch_size, seq_len)
+        
         old_actions = torch.tensor(np.array(old_actions), device=self.device, dtype=torch.float)
-        old_actions = old_actions.view(batch_size, seq_len, -1)
+        old_actions = old_actions.view(batch_size, seq_len, -1)  # (batch, seq, action_dim)
+
+        # 重塑 rewards 和 dones 为二维 (batch, seq)
         old_rewards = torch.tensor(old_rewards, device=self.device, dtype=torch.float)
+        old_rewards = old_rewards.view(batch_size, seq_len)  # 新增：确保二维
+
         old_dones = torch.tensor(old_dones, device=self.device, dtype=torch.float)
+        old_dones = old_dones.view(batch_size, seq_len)       # 新增：确保二维
+
         old_log_probs = torch.tensor(old_log_probs, device=self.device, dtype=torch.float)
         old_log_probs = old_log_probs.view(batch_size, seq_len)
 
+        advantages = self.compute_advantage(
+            rewards=old_rewards,
+            values=values,
+            dones=old_dones,
+            last_value=torch.zeros(batch_size, device=self.device)  # 假设后续状态value为0
+        )
+        
+        
         # 梯度累积参数
         accumulation_steps = self.k_epochs  # 将一个大批次分成多个小批次
         mini_batch_size = max(1, batch_size // accumulation_steps)
@@ -872,18 +982,19 @@ class PPO_Agent:
                 end_idx = start_idx + mini_batch_size
                 mini_states = old_states[start_idx:end_idx]
                 mini_actions = old_actions[start_idx:end_idx]
-                mini_rewards = old_rewards[start_idx:end_idx]
+                # mini_rewards = old_rewards[start_idx:end_idx]
+                mini_advantages = advantages[start_idx:end_idx].view(-1)
                 mini_log_probs = old_log_probs[start_idx:end_idx]
 
                 # 跳过空批次
                 if mini_states.size(0) == 0:
                     continue
 
-                # 前向传播 Critic
-                values, _ = self.critic(mini_states)
-                values = values.view(-1)
-                flat_rewards = mini_rewards.view(-1)
-                advantage = flat_rewards - values.detach()
+                # # 前向传播 Critic
+                # values, _ = self.critic(mini_states)
+                # values = values.view(-1)
+                # flat_rewards = mini_rewards.view(-1)
+                # advantage = flat_rewards - values.detach()    # 这里的优势函数可以用GAE 
 
                 # 前向传播 Actor
                 mu, sigma, _ = self.actor(mini_states, istest=False)
@@ -909,10 +1020,17 @@ class PPO_Agent:
                     print("警告: ratio包含NaN或Inf，跳过此批次更新")
                     continue
                     
-                surr1 = ratio * advantage
-                surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantage
+                # surr1 = ratio * advantage
+                surr1 = ratio * mini_advantages
+                # surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantage
+                surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * mini_advantages
                 actor_loss = -torch.min(surr1, surr2).mean() + self.entropy_coef * dist.entropy().mean()
-                critic_loss = (flat_rewards - values).pow(2).mean()
+                
+                 # 重新计算当前mini_batch的values（动态更新Critic）
+                current_values, _ = self.critic(mini_states)
+                current_values = current_values.view(-1)
+                critic_loss = (current_values - (mini_advantages + values.detach())).pow(2).mean()
+                # critic_loss = (flat_rewards - values).pow(2).mean()
                 
                 # 检查损失是否为NaN
                 if torch.isnan(actor_loss) or torch.isnan(critic_loss):
@@ -1046,3 +1164,86 @@ class PPO_Agent:
         safe_save(actor_path, self.actor)
         safe_save(critic_path, self.critic)
 
+
+
+
+
+
+
+
+
+class HierarchicalReplay(SequentialPGReplay):
+    def __init__(self, sequence_length=8):
+        super().__init__(sequence_length)
+        self.high_buffer = []  # 存储高层经验
+        
+    def push(self, transition):
+        # 原有底层经验存储
+        super().push(transition)
+        
+        # 高层经验存储（每N步）
+        if transition['is_high']:  # 需在外部标记是否为高层决策步
+            self.high_buffer.append({
+                'state': transition[0],
+                'subgoal': transition['subgoal'],
+                'high_reward': transition['high_reward']
+            })
+    
+    def sample_high(self):
+        # 高层数据采样（完整序列）
+        batch = list(self.high_buffer)
+        return zip(*[(item['state'], item['subgoal'], item['high_reward']) for item in batch])
+
+class HierarchicalPPOAgent(PPO_Agent):
+    def __init__(self, config, istest=True, actor_path=None, critic_path=None):
+        super().__init__(config, istest, actor_path, critic_path)
+        # 替换原有网络
+        self.manager = HighLevelManager(config).to(config.device)
+        self.worker = LowLevelWorker(config).to(config.device)
+        self.manager_optimizer = torch.optim.Adam(self.manager.parameters(), lr=config.actor_lr)
+        
+        # 新增高层Critic
+        self.manager_critic = Critic(config).to(config.device)
+        self.manager_critic_optimizer = torch.optim.Adam(self.manager_critic.parameters(), lr=config.critic_lr)
+        
+        # 分层参数
+        self.subgoal_dim = config.subgoal_dim  # 子目标维度
+        self.subgoal_steps = config.subgoal_steps  # 子目标更新频率（如每10步）
+        
+    def sample_action(self, obs, reward=None, done=False):
+        # 历史状态处理（保持原有逻辑）
+        state = torch.tensor(obs['agent_obs'], dtype=torch.float).to(self.device)
+        state = state.unsqueeze(0)
+        sequence = self.update_history_sequence(state)
+        
+        # 每N步生成新子目标
+        if self.sample_count % self.subgoal_steps == 0:
+            with torch.no_grad():
+                self.current_subgoal, (self.manager_h, self.manager_c) = self.manager(
+                    sequence.unsqueeze(0),  # 添加batch维度
+                    self.manager_h, 
+                    self.manager_c
+                )
+        
+        # 底层动作生成（输入子目标）
+        mu, sigma, (self.actor_h, self.actor_c) = self.worker(
+            sequence, 
+            self.current_subgoal.detach(),  # 分离梯度
+            self.actor_h, 
+            self.actor_c
+        )
+        
+        # 后续动作处理（保持原有截断逻辑）
+        action = self._postprocess_action(mu, sigma)
+        return action
+    
+    def _compute_rewards(self, batch):
+        # 底层奖励 = 环境奖励 + 子目标对齐奖励
+        env_rewards = batch['env_reward']
+        subgoal_alignment = torch.norm(batch['achieved_goal'] - batch['subgoal'], dim=1)
+        low_rewards = env_rewards * 0.8 + (1 - subgoal_alignment) * 0.2
+        
+        # 高层奖励 = 子目标完成度
+        high_rewards = (subgoal_alignment < 0.1).float()  # 示例：子目标误差小于0.1时奖励1
+        
+        return low_rewards, high_rewards

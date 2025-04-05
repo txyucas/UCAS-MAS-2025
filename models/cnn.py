@@ -166,158 +166,109 @@ class Critic(nn.Module):
         # 全连接层
         self.fc = nn.Linear(self.lstm_hidden_size, 1)
 
+    # def forward(self, x, h_state=None, c_state=None):
+    #     # 确保输入维度为 (batch_size, seq_len, channels, height, width)
+        
+    #     batch_size, seq_len, c, h, w = x.size()
+    #     x = x.view(batch_size * seq_len, c, h, w)  # 展平时间维度
+    #     x = self.cnn_layers(x)
+    #     x = x.view(batch_size, seq_len, -1)  # 恢复时间维度
+
+    #     # 初始化 h 和 c 为纯零
+    #     if h_state is None or c_state is None:
+
+    #         h_state = torch.zeros(1, batch_size, self.lstm_hidden_size, device=x.device)
+    #         c_state = torch.zeros(1, batch_size, self.lstm_hidden_size, device=x.device)
+    #     h_state = torch.nan_to_num(h_state) if h_state is not None else h_state
+    #     c_state = torch.nan_to_num(c_state) if c_state is not None else c_state
+
+    #     # LSTM 处理
+    #     lstm_out, (h_state, c_state) = self.lstm(x, (h_state, c_state))
+
+    #     # 取最后一个时间步的输出
+    #     lstm_out = lstm_out[:, -1, :]
+
+    #     # 输出值
+    #     x = self.fc(lstm_out)
+    #     return x[:, 0], (h_state, c_state)  # 返回一维张量和新的隐藏状态
     def forward(self, x, h_state=None, c_state=None):
         # 确保输入维度为 (batch_size, seq_len, channels, height, width)
-        
         batch_size, seq_len, c, h, w = x.size()
         x = x.view(batch_size * seq_len, c, h, w)  # 展平时间维度
         x = self.cnn_layers(x)
-        x = x.view(batch_size, seq_len, -1)  # 恢复时间维度
+        x = x.view(batch_size, seq_len, -1)  # 恢复为 (batch, seq, features)
 
-        # 初始化 h 和 c 为纯零
+        # 初始化 LSTM 隐藏状态
         if h_state is None or c_state is None:
-
             h_state = torch.zeros(1, batch_size, self.lstm_hidden_size, device=x.device)
             c_state = torch.zeros(1, batch_size, self.lstm_hidden_size, device=x.device)
-        h_state = torch.nan_to_num(h_state) if h_state is not None else h_state
-        c_state = torch.nan_to_num(c_state) if c_state is not None else c_state
 
-        # LSTM 处理
-        lstm_out, (h_state, c_state) = self.lstm(x, (h_state, c_state))
+        # LSTM 处理所有时间步
+        lstm_out, (h_state, c_state) = self.lstm(x, (h_state, c_state))  # lstm_out 形状: (batch, seq, hidden_size)
 
-        # 取最后一个时间步的输出
-        lstm_out = lstm_out[:, -1, :]
+        # 为每个时间步生成值函数
+        values = self.fc(lstm_out)          # 形状: (batch, seq, 1)
+        values = values.squeeze(-1)        # 形状: (batch, seq)
 
-        # 输出值
-        x = self.fc(lstm_out)
-        return x[:, 0], (h_state, c_state)  # 返回一维张量和新的隐藏状态
+        return values, (h_state, c_state)  # 返回所有时间步的值和隐藏状态
     
-class SelfPlayManager:
-    def __init__(
-        self, 
-        env,                   # 环境实例
-        config,                # 配置参数对象
-        device: str = "cuda",  # 计算设备
-        pool_capacity: int = 5,# 对手池容量
-        opponent_prob: float = 0.7  # 选择历史对手的概率
-    ):
-        self.env = env
-        self.device = device
-        self.config = config
-        self.pool_capacity = pool_capacity
-        self.opponent_prob = opponent_prob
+
+# 在原有Actor基础上新增 HighLevelManager
+class HighLevelManager(nn.Module):
+    """高层策略网络，生成子目标（连续向量）"""
+    def __init__(self, config):
+        super().__init__()
+        # 共享底层CNN特征提取器（与Actor相同结构）
+        self.cnn_layers = Actor(config).cnn_layers  # 直接复用Actor的CNN部分
         
-        # 初始化对手池
-        self.opponent_pool = deque(maxlen=pool_capacity)
-        initial_policy = self._create_policy()
-        self.opponent_pool.append(initial_policy)
+        # LSTM参数
+        self.lstm = nn.LSTM(
+            input_size=config.lstm_hidden_size,  # 与Actor的LSTM hidden size一致
+            hidden_size=config.manager_lstm_size,
+            batch_first=True
+        )
         
-    def _create_policy(self) -> Actor:
-        """创建新策略实例并移至指定设备"""
-        policy = Actor(self.config).to(self.device)
-        return policy
-    
-    def _clone_policy(self, source: Actor) -> Actor:
-        """克隆策略参数"""
-        cloned = self._create_policy()
-        cloned.load_state_dict(source.state_dict())
-        return cloned
-    
-    def update_pool(self, new_policy: Actor):
-        """更新对手池"""
-        cloned = self._clone_policy(new_policy)
-        self.opponent_pool.append(cloned)
+        # 子目标生成层
+        self.goal_fc = nn.Sequential(
+            nn.Linear(config.manager_lstm_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, config.subgoal_dim)  # subgoal_dim=2 (示例维度)
+        )
+
+    def forward(self, x, h_state=None, c_state=None):
+        # 输入x形状: (batch, seq_len, c, h, w)
+        batch_size, seq_len = x.shape[0], x.shape[1]
         
-    def select_opponent(self) -> Actor:
-        """选择对手策略：有概率选择当前策略"""
-        if random.random() < self.opponent_prob and len(self.opponent_pool) > 1:
-            return random.choice(list(self.opponent_pool)[:-1])  # 排除最新策略
-        else:
-            return self.opponent_pool[-1]  # 最新策略即当前策略
+        # CNN特征提取（与Actor共享）
+        x = x.view(batch_size * seq_len, *x.shape[2:])  # (batch*seq, c, h, w)
+        cnn_features = self.cnn_layers(x)
+        cnn_features = cnn_features.view(batch_size, seq_len, -1)  # (batch, seq, features)
         
-    def run_episode(
-        self, 
-        current_policy: Actor, 
-        max_steps: int = 200,
-        render: bool = False
-    ) -> List[Dict]:
-        """运行单次自博弈对局"""
-        opponent = self.select_opponent()
-        state = self.env.reset()
-        trajectory = []
-        h_state, c_state = None, None  # LSTM初始状态
+        # LSTM处理
+        if h_state is None:
+            h_state = torch.zeros(1, batch_size, self.lstm.hidden_size, device=x.device)
+            c_state = torch.zeros(1, batch_size, self.lstm.hidden_size, device=x.device)
+        lstm_out, (h_state, c_state) = self.lstm(cnn_features, (h_state, c_state))
         
-        for _ in range(max_steps):
-            # 当前策略动作
-            with torch.no_grad():
-                state_tensor = torch.FloatTensor(state).unsqueeze(0).unsqueeze(0).to(self.device)
-                mu, std, (h_next, c_next) = current_policy(
-                    state_tensor, h_state, c_state
-                )
-                action = torch.normal(mu, std).squeeze(0).cpu().numpy()
-                
-            # 环境执行动作
-            next_state, reward, done, _ = self.env.step(action)
-            
-            # 对手策略动作
-            with torch.no_grad():
-                opp_state_tensor = torch.FloatTensor(next_state).unsqueeze(0).unsqueeze(0).to(self.device)
-                opp_mu, opp_std, _ = opponent(opp_state_tensor, None, None)
-                opp_action = torch.normal(opp_mu, opp_std).squeeze(0).cpu().numpy()
-                
-            # 环境二次交互
-            next_state, opp_reward, done, _ = self.env.step(opp_action)
-            
-            # 存储轨迹
-            trajectory.append({
-                "state": state.copy(),
-                "action": action,
-                "opp_action": opp_action,
-                "reward": reward - opp_reward,  # 差分奖励
-                "h_state": h_state.clone() if h_state is not None else None,
-                "c_state": c_state.clone() if c_state is not None else None,
-                "done": done
-            })
-            
-            # 更新状态
-            state = next_state.copy()
-            h_state, c_state = h_next.detach(), c_next.detach()
-            
-            if render:
-                self.env.render()
-                
-            if done:
-                break
-                
-        return trajectory
-    
-    def evaluate(
-        self, 
-        current_policy: Actor, 
-        num_episodes: int = 10
-    ) -> float:
-        """评估当前策略的胜率"""
-        win_count = 0
+        # 生成子目标
+        subgoal = self.goal_fc(lstm_out[:, -1, :])  # 取最后一个时间步
+        return subgoal, (h_state, c_state)
+
+# 修改原有Actor为LowLevelWorker
+class LowLevelWorker(nn.Module):
+    """底层策略网络，接收子目标生成动作"""
+    def __init__(self, config):
+        super().__init__()
+        # 保持原有Actor结构，但修改输入维度
+        self.cnn_layers = Actor(config).cnn_layers
         
-        for _ in range(num_episodes):
-            trajectory = self.run_episode(current_policy, render=False)
-            final_reward = sum(t["reward"] for t in trajectory)
-            if final_reward > 0:  # 根据环境定义调整胜利条件
-                win_count += 1
-                
-        return win_count / num_episodes
-    
-    def save_pool(self, path: str):
-        """保存对手池"""
-        torch.save({
-            i: policy.state_dict() for i, policy in enumerate(self.opponent_pool)
-        }, path)
+        # 扩展LSTM输入：原特征 + 子目标
+        self.lstm = nn.LSTM(
+            input_size=config.lstm_hidden_size + config.subgoal_dim,  # 新增子目标维度
+            hidden_size=config.lstm_hidden_size,
+            batch_first=True
+        )
         
-    def load_pool(self, path: str):
-        """加载对手池"""
-        checkpoint = torch.load(path, map_location=self.device)
-        self.opponent_pool = deque(maxlen=self.pool_capacity)
-        for i in checkpoint.keys():
-            policy = self._create_policy()
-            policy.load_state_dict(checkpoint[i])
-            self.opponent_pool.append(policy)
+        # 保持原有输出层
+        self.fc_mu = nn.Linear(config.lstm_hidden_size, 2)
+        self.fc_std = nn.Linear(config.lstm_hidden_size, 2)
