@@ -21,13 +21,15 @@ game_map_dict = {
 
 wandb.init(project="MAS", config=train_config().__dict__, name='MAS_test2')  # 在脚本开始时进行初始化，而不是函数内部
 
-def initialize_game(map_name):
+def initialize_game(map):
     
-    """返回环境实例和智能体数量"""
-    assert map_name in game_map_dict, f"无效地图: {map_name}"
-    scenario = create_scenario(map_name)
-    env_class = game_map_dict[map_name]
-    return env_class(scenario), 2  # 所有环境都是双智能体
+    Gamemap = create_scenario(map)
+    if map in game_map_dict:
+        game = game_map_dict[map](Gamemap)
+        agent_num = 2
+    else:
+        raise ValueError(f"Unknown map: {map}")
+    return game, agent_num
 
 def get_random_game(game_map):
     """随机选择游戏地图和智能体数量"""
@@ -39,11 +41,9 @@ def get_random_game(game_map):
 
 
 class Trainer:
-    def __init__(self,agent1=None,agent2=None,config=train_config(),):
-        selected_map = random.choice(list(game_map_dict.keys()))
-        self.env, _ = initialize_game(selected_map)  # 正确解包返回值
-        self.agent1 = agent1 if agent1 else PPO_Agent(config=CnnConfig1(), env=self.env)
-        self.agent2 = agent2 if agent2 else PPO_Agent(config=CnnConfig2(), env=self.env)
+    def __init__(self,agent1=PPO_Agent(config=CnnConfig1()),agent2=PPO_Agent(config=CnnConfig2()),config=train_config(),):
+        self.agent1=agent1
+        self.agent2=agent2
         self.config = config
         self.random_agent=random_agent()
         # self.backup_step = 0
@@ -51,25 +51,6 @@ class Trainer:
         # self.mini_batch_size = 16  # 每次梯度更新的小批次大小
         self.step_penalty = 1e-2
         # Load the models if paths are provided
-        
-        self.opponent_pool_size = 5                   # 对手池容量
-        self.sp_update_interval = 50                  # 池更新间隔
-        self.agent1_opponent_pool = deque(maxlen=self.opponent_pool_size)  # 智能体1的对手池
-        self.agent2_opponent_pool = deque(maxlen=self.opponent_pool_size)  # 智能体2的对手池
-        self._init_opponent_pools()   
-        self.env = initialize_game(random.choice(game_map_dict))[0]
-        self.agent1.set_env(self.env)
-        self.agent2.set_env(self.env)  
-        
-    def _init_opponent_pools(self):
-        """用当前策略初始化对手池"""
-        self._add_to_pool(self.agent1, self.agent1_opponent_pool)
-        self._add_to_pool(self.agent2, self.agent2_opponent_pool)
-    
-    def _add_to_pool(self, agent, pool):
-        """克隆策略加入指定池"""
-        cloned_actor = self._clone_actor(agent.actor)
-        pool.append(cloned_actor)
 
     # def _collect_experiences(self):
     #     """跨多个episode收集经验，直到达到batch_size"""
@@ -103,17 +84,6 @@ class Trainer:
     #                 self.agent2.reset_lstm()
 
     def _train_one_step(self):
-        # 确保每轮训练使用统一环境
-        if not hasattr(self, 'env') or self.env is None:
-            self._reset_environment()
-        
-        # 自博弈前同步策略池
-        if self.global_step % self.sp_update_interval == 0:
-            self._sync_opponent_pools()
-        
-        # 环境重置
-        state = self.env.reset()
-        
         # 保存当前模型状态作为备份
         if hasattr(self, 'backup_step') and self.backup_step % 20 == 0:
             self._save_model_checkpoint("backup_actor1.pth", "backup_actor2.pth", 
@@ -184,10 +154,6 @@ class Trainer:
             "train_reward_agent1": ep_reward_agent1,
             "train_reward_agent2": ep_reward_agent2
         })
-        
-        # 每50步更新对手池
-        if self.global_step % self.sp_update_interval == 0:
-            self._update_opponent_pools()
     
     def _save_model_checkpoint(self, actor1_path, actor2_path, critic1_path, critic2_path):
         torch.save(self.agent1.actor.state_dict(), actor1_path)
@@ -281,33 +247,8 @@ class Trainer:
                 "eval_mean_reward_agent1": mean_eval_reward_agent1,
                 "eval_mean_reward_agent2": mean_eval_reward_agent2
             })
-            
+    
             print(f"评估结果 - 智能体1平均奖励: {mean_eval_reward_agent1:.2f}, 智能体2平均奖励: {mean_eval_reward_agent2:.2f}")
-            
-        self._evaluate_against_pool(self.agent1, self.agent2_opponent_pool, "agent1_vs_pool")
-        self._evaluate_against_pool(self.agent2, self.agent1_opponent_pool, "agent2_vs_pool")
-     
-    def _evaluate_against_pool(self, agent, opponent_pool, log_prefix):
-        """评估智能体对对手池的平均表现"""
-        if len(opponent_pool) == 0:
-            return
-
-        total_reward = 0
-        for opponent_actor in opponent_pool:
-            # 临时加载对手策略
-            original_actor = self.agent1.actor  # 假设评估agent1
-            self.agent1.actor = opponent_actor
-            
-            # 运行评估
-            eval_reward = self._run_eval_episode(agent, opponent_actor)
-            total_reward += eval_reward
-            
-            # 恢复原始策略
-            self.agent1.actor = original_actor
-
-        avg_reward = total_reward / len(opponent_pool)
-        wandb.log({f"{log_prefix}_avg_reward": avg_reward}) 
-            
     def _renew_args(self):
         """随着训练的进行，逐渐降低学习率、eps_clip 和 entropy_coef"""
         # 减小学习率
@@ -393,8 +334,6 @@ class Trainer:
             print(f"随机对抗评估结果 - 智能体1平均奖励: {mean_random_eval_reward_agent1:.2f}, "
                   f"智能体2平均奖励: {mean_random_eval_reward_agent2:.2f}")
     def training(self,actor1_path=None, actor2_path=None, critic1_path=None, critic2_path=None):
-         # 新增自博弈参数追踪
-        self.global_step = 0
         for i in range(self.config.num_episodes):
             for i in range(self.config.batch_per_epi):
                 self.env, agent_num = get_random_game(game_map_dict)
@@ -405,19 +344,6 @@ class Trainer:
             # Save the models
             self.agent1.save_model(actor1_path, critic1_path)
             self.agent2.save_model(actor2_path, critic2_path)
-            
-            # 新增策略池同步
-            if i % 100 == 0:
-                self._sync_opponent_pools()
-                
-            self.global_step += 1
-    
-    def _sync_opponent_pools(self):
-        """同步两个智能体的对手池"""
-        # 交换部分策略增加多样性
-        swap_num = min(2, len(self.agent1_opponent_pool), len(self.agent2_opponent_pool))
-        self.agent1_opponent_pool.extend(random.sample(self.agent2_opponent_pool, swap_num))
-        self.agent2_opponent_pool.extend(random.sample(self.agent1_opponent_pool, swap_num))
 
 if __name__ == "__main__":
     # Initialize the game and agents

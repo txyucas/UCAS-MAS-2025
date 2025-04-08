@@ -1,9 +1,6 @@
 import torch.nn as nn
 from collections import OrderedDict
 import torch
-from collections import deque
-from typing import List, Dict, Tuple
-import random
 
 
 class CnnBlock(nn.Module):
@@ -23,6 +20,7 @@ class CnnBlock(nn.Module):
         x = self.drop_out(x)
         return x
 
+
 class Actor(nn.Module):
     def __init__(self, config):
         super(Actor, self).__init__()
@@ -36,8 +34,6 @@ class Actor(nn.Module):
         # 假设输入图像的空间维度为 config.input_height 和 config.input_width
         self.input_height = config.input_height
         self.input_width = config.input_width
-        self.config = config
-        self.device = config.device
 
         # 切换到评估模式以避免 BatchNorm 的统计计算问题
         # 切换到评估模式以避免 BatchNorm 的统计计算问题
