@@ -147,6 +147,8 @@ class PPO_Agent:
         self.k_epochs = config.k_epochs  # 一条序列的数据用来训练轮数
         self.device = config.device
         
+        self.config = config
+        
         self.eps_clip = config.eps_clip     #PPO截断阈值
         self.entropy_coef = config.entropy_coef # entropy coefficient， 熵奖励系数
         self.update_freq = config.update_freq #策略更新频率
@@ -161,7 +163,12 @@ class PPO_Agent:
         self.actor_c = None
         self.critic_h = None
         self.critic_c = None
+        self.isnan = False  # 用于检查动作分布是否异常
         # 这说明了如果一个模型很烂，得删掉重新训
+        self.load_model(actor_path, critic_path)
+        
+    def load_model(self, actor_path=None, critic_path=None):
+        """加载模型参数"""
         if actor_path is not None:
             self.actor.load_state_dict(torch.load(actor_path))
             print(f"Actor model loaded from {actor_path}")
@@ -591,6 +598,25 @@ class PPO_Agent:
         safe_save(actor_path, self.actor)
         safe_save(critic_path, self.critic)
 
+    def clone(self):
+        """创建当前PPO_Agent的深度拷贝，包括模型参数和优化器状态，但重置其他运行时状态"""
+        # 创建新实例，使用原配置和测试模式标志
+        cloned_agent = PPO_Agent(config=self.config, actor_path=None, critic_path=None)
+        
+        # 复制神经网络参数
+        cloned_agent.actor.load_state_dict(self.actor.state_dict())
+        cloned_agent.critic.load_state_dict(self.critic.state_dict())
+        
+        # 复制优化器状态（必须在模型参数加载之后进行）
+        cloned_agent.actor_optimizer.load_state_dict(self.actor_optimizer.state_dict())
+        cloned_agent.critic_optimizer.load_state_dict(self.critic_optimizer.state_dict())
+        
+        # 复制需要保留的训练进度参数
+        cloned_agent.sample_count = self.sample_count
+        
+        # 新实例的其他运行时状态（如history、隐藏状态）已在构造函数中初始化，无需额外处理
+        
+        return cloned_agent
 
 
 

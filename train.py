@@ -8,6 +8,7 @@ from configs.config import CnnConfig1, CnnConfig2,train_config
 import wandb
 from agents.PPO import PPO_Agent
 from olympics_engine.agent import *
+import os
 # import datetime
 # import glob
 game_map_dict = {
@@ -41,11 +42,15 @@ def get_random_game(game_map):
 
 
 class Trainer:
-    def __init__(self,agent1=PPO_Agent(config=CnnConfig1()),agent2=PPO_Agent(config=CnnConfig2()),config=train_config(),):
+    def __init__(self,agent1=PPO_Agent(config=CnnConfig1()),agent2=PPO_Agent(config=CnnConfig2()),config=train_config(),actor1_path="backup_actor1.pth", actor2_path="backup_actor2.pth", critic1_path="backup_critic1.pth", critic2_path="backup_critic2.pth"):
         self.agent1=agent1
         self.agent2=agent2
         self.config = config
         self.random_agent=random_agent()
+        self.actor1_path=actor1_path
+        self.actor2_path=actor2_path
+        self.critic1_path=critic1_path
+        self.critic2_path=critic2_path
         # self.backup_step = 0
         # self.batch_size = 64  # 每次更新需要积累的步数
         # self.mini_batch_size = 16  # 每次梯度更新的小批次大小
@@ -86,8 +91,7 @@ class Trainer:
     def _train_one_step(self):
         # 保存当前模型状态作为备份
         if hasattr(self, 'backup_step') and self.backup_step % 20 == 0:
-            self._save_model_checkpoint("backup_actor1.pth", "backup_actor2.pth", 
-                                        "backup_critic1.pth", "backup_critic2.pth")
+            self._save_model_checkpoint(self.actor1_path, self.actor2_path, self.critic1_path, self.critic2_path)
         
         # # 初始化备份计数器
         # if not hasattr(self, 'backup_step'):
@@ -344,12 +348,104 @@ class Trainer:
             # Save the models
             self.agent1.save_model(actor1_path, critic1_path)
             self.agent2.save_model(actor2_path, critic2_path)
+            
+class SelfPlay:
+    def __init__(
+        self,
+        base_agent_1,          # 初始智能体对象（必须实现 clone() 方法）
+        base_agent_2,     # 可选的第二个初始智能体对象
+        pool_size=10,        # 对手池容量
+        num_training=20,  # 训练迭代次数
+        # save_dir="selfplay_models",  # 模型存储目录
+        device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu") # 设备（CPU/GPU）
+    ):
+        """
+        自博弈训练管理器
+        核心逻辑：
+        1. 维护一个历史对手池（包含不同训练阶段的智能体）
+        2. 每次训练时从池中随机选择对手
+        3. 定期将当前智能体的克隆加入池中
+        """
+        self.base_agent_1 = base_agent_1
+        self.base_agent_2 = base_agent_2
+        self.pool_size = pool_size
+        # self.save_dir = save_dir
+        self.device = device
+        self.current_iter = 0  
+        self.num_training = num_training
+        
+        # 初始化对手池（至少包含初始智能体）
+        self.opponent_pool = [self._clone_agent(base_agent_1), self._clone_agent(base_agent_2)]
+        # os.makedirs(save_dir, exist_ok=True)
 
+    def _clone_agent(self, agent):
+        """深拷贝智能体（假设agent实现了clone方法）"""
+        cloned = agent.clone()
+        return cloned
+
+    # def _save_agent(self, agent, tag):
+    #     """保存智能体到文件（假设agent实现了save方法）"""
+    #     path_actor = os.path.join(self.save_dir, f"agent_actor_{tag}.pth")
+    #     path_critic = os.path.join(self.save_dir, f"agent_critic_{tag}.pt")
+    #     agent.save_model(path_actor, path_critic)
+
+    # def _load_agent(self, path_actor, path_critic):
+    #     """加载智能体（假设agent类有load方法）"""
+    #     return type(self.base_agent_1).load_model(path_actor, path_critic)
+
+    def update_pool(self, new_agent):
+        """更新对手池（先进先出策略）"""
+        # 克隆新智能体加入池中
+        self.opponent_pool.append(self._clone_agent(new_agent))
+        
+        # 保持池的大小不超过限制
+        if len(self.opponent_pool) > self.pool_size:
+            removed_agent = self.opponent_pool.pop(0)
+            del removed_agent  # 显式释放内存
+
+    def get_opponent(self, epsilon=0.4):
+        """
+        获取训练对手（带探索机制）
+        Args:
+            epsilon: 使用最新智能体的概率（否则随机选历史对手）
+        """
+        if random.random() < epsilon or len(self.opponent_pool) == 1:
+            return self.opponent_pool[-1]  # 使用最新对手
+        else:
+            return random.choice(self.opponent_pool[:-1])  # 从历史中随机选择
+
+    def training(
+        self
+    ):
+        """
+        执行一次自博弈训练迭代
+        流程：
+        1. 选择对手
+        2. 创建训练环境
+        3. 训练当前智能体
+        4. 更新对手池
+        """
+        for i in range (self.num_training):
+            # 选择对手
+            opponent = self.get_opponent()
+            # 初始化训练器（假设训练器接收当前智能体和环境）
+            trainer = Trainer(agent1=self.base_agent_1, agent2=opponent, config=train_config())
+            
+            # 执行训练
+            trainer.training(actor1_path="ckpt_selfplay/actor1.pth", actor2_path=f"ckp_selfplayt/actor2.pth", critic1_path=f"ckpt_selfplay/critic1.pth", critic2_path=f"ckpt_selfplay/critic2.pth")
+            
+            # 更新对手池（此处假设每次迭代后都更新）
+            self.update_pool(self.base_agent_1)
+
+            
 if __name__ == "__main__":
     # Initialize the game and agents
     agent1 = PPO_Agent(config=CnnConfig1(),istest=False,)
     agent2 = PPO_Agent(config=CnnConfig2(),istest=False,)
-    trainer = Trainer(agent1=agent1, agent2=agent2, config=train_config())
+    # trainer = Trainer(agent1=agent1, agent2=agent2, config=train_config())
     
-    # Start training
-    trainer.training(actor1_path="ckpt/actor1.pth", actor2_path="ckpt/actor2.pth", critic1_path="ckpt/critic1.pth", critic2_path="ckpt/critic2.pth")
+    # # Start training
+    # trainer.training(actor1_path="ckpt/actor1.pth", actor2_path="ckpt/actor2.pth", critic1_path="ckpt/critic1.pth", critic2_path="ckpt/critic2.pth")
+    
+    selfplay = SelfPlay(base_agent_1=agent1, base_agent_2=agent2)
+    selfplay.training()

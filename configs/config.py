@@ -69,7 +69,7 @@ class train_config:
     
     eval_eps = 5 # 评估的回合数
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    max_steps: int = 3000
+    max_steps: int = 500
     num_episodes: int = 100
     batch_per_epi:int=30 # 每个回合的批次数
     
