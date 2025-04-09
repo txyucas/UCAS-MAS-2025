@@ -9,6 +9,7 @@ import wandb
 from agents.PPO import PPO_Agent
 from olympics_engine.agent import *
 import os
+import numpy as np
 # import datetime
 # import glob
 game_map_dict = {
@@ -51,6 +52,8 @@ class Trainer:
         self.actor2_path=actor2_path
         self.critic1_path=critic1_path
         self.critic2_path=critic2_path
+        self.rewardlist_1 = []
+        self.rewardlist_2 = []
         # self.backup_step = 0
         # self.batch_size = 64  # 每次更新需要积累的步数
         # self.mini_batch_size = 16  # 每次梯度更新的小批次大小
@@ -137,8 +140,8 @@ class Trainer:
             self.agent1.memory.push((state[0], action_agent1, self.agent1.log_probs, reward_agent1, done))
             self.agent2.memory.push((state[1], action_agent2, self.agent2.log_probs, reward_agent2, done))
             state = next_state
-            self.agent1.update()
-            self.agent2.update()
+            self.rewardlist_1.append(self.agent1.update())
+            self.rewardlist_2.append(self.agent2.update())
             ep_reward_agent1 += reward_agent1
             ep_reward_agent2 += reward_agent2
             
@@ -373,6 +376,7 @@ class SelfPlay:
         self.device = device
         self.current_iter = 0  
         self.num_training = num_training
+        self.piority_list = [0,0]
         
         # 初始化对手池（至少包含初始智能体）
         self.opponent_pool = [self._clone_agent(base_agent_1), self._clone_agent(base_agent_2)]
@@ -403,16 +407,38 @@ class SelfPlay:
             removed_agent = self.opponent_pool.pop(0)
             del removed_agent  # 显式释放内存
 
-    def get_opponent(self, epsilon=0.4):
+    def get_opponent(self, epsilon=0.8):
         """
         获取训练对手（带探索机制）
         Args:
             epsilon: 使用最新智能体的概率（否则随机选历史对手）
         """
         if random.random() < epsilon or len(self.opponent_pool) == 1:
-            return self.opponent_pool[-1]  # 使用最新对手
+            maxindex = self.piority_list.index(max(self.piority_list))
+            return self.opponent_pool[maxindex], maxindex
         else:
-            return random.choice(self.opponent_pool[:-1])  # 从历史中随机选择
+            random_index = random.randint(0, len(self.opponent_pool)-1)  # 生成随机索引
+            opponent = self.opponent_pool[random_index]          # 通过索引获取元素
+            return opponent, random_index  # 从历史中随机选择
+
+    def compute_piority(self, mean_value, value_std, mean_reward):
+        """
+        计算对手的优先级
+        Args:
+            mean_value: 平均值
+            value_std: 标准差
+            mean_reward: 平均奖励
+        """
+        reward_factor = 1.0 / (abs(mean_reward) + 1e-6)
+        stability_factor = 1.0 / (value_std + 1e-6)
+        return 0.7 * reward_factor + 0.3 * stability_factor
+
+    def update_piority(self, opponent_id, updatelist):
+        piority_1 = self.compute_piority(updatelist[0], updatelist[1], updatelist[2])
+        piority_2 = self.compute_piority(updatelist[3], updatelist[4], updatelist[5])
+        
+        self.piority_list[opponent_id]=piority_2
+        self.piority_list.append(piority_1)
 
     def training(
         self
@@ -427,15 +453,25 @@ class SelfPlay:
         """
         for i in range (self.num_training):
             # 选择对手
-            opponent = self.get_opponent()
+            opponent, opponent_id = self.get_opponent()
             # 初始化训练器（假设训练器接收当前智能体和环境）
             trainer = Trainer(agent1=self.base_agent_1, agent2=opponent, config=train_config())
             
             # 执行训练
             trainer.training(actor1_path="ckpt_selfplay/actor1.pth", actor2_path=f"ckp_selfplayt/actor2.pth", critic1_path=f"ckpt_selfplay/critic1.pth", critic2_path=f"ckpt_selfplay/critic2.pth")
             
+            mean_value_1 = np.mean(trainer.rewardlist_1[:,0])
+            value_std_1 = np.mean(trainer.rewardlist_1[:,1])
+            mean_reward_1 = np.mean(trainer.rewardlist_1[:,2])
+            mean_value_2 = np.mean(trainer.rewardlist_2[:,0])
+            value_std_2 = np.mean(trainer.rewardlist_2[:,1])
+            mean_reward_2 = np.mean(trainer.rewardlist_2[:,2])
+            
+            updatelist = np.array([mean_value_1, value_std_1, mean_reward_1, mean_value_2, value_std_2, mean_reward_2])
+            
             # 更新对手池（此处假设每次迭代后都更新）
             self.update_pool(self.base_agent_1)
+            self.update_piority(opponent_id, updatelist)
 
             
 if __name__ == "__main__":

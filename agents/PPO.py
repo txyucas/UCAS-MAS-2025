@@ -165,6 +165,8 @@ class PPO_Agent:
         self.critic_c = None
         self.isnan = False  # 用于检查动作分布是否异常
         # 这说明了如果一个模型很烂，得删掉重新训
+        self.episode_values = []
+        self.episode_rewards = []
         self.load_model(actor_path, critic_path)
         
     def load_model(self, actor_path=None, critic_path=None):
@@ -228,6 +230,15 @@ class PPO_Agent:
         
         # 保存log_prob供外部使用
         self.log_probs = log_prob
+        
+        with torch.no_grad():
+            current_value, _ = self.critic(sequence)
+            current_value = current_value.mean()
+            self.episode_values.append(current_value.item())
+        
+        # 记录奖励（环境反馈的奖励）
+        if reward is not None:
+            self.episode_rewards.append(reward)
         
         return action_np.tolist()
 
@@ -414,7 +425,7 @@ class PPO_Agent:
     def update(self):
         # update policy every n steps，只在达到更新频率才更新
         if self.sample_count % self.update_freq != 0:
-            return
+            return None
 
         old_states, old_actions, old_log_probs, old_rewards, old_dones = self.memory.sample()
 
@@ -580,6 +591,14 @@ class PPO_Agent:
 
         # 清空记忆缓冲区
         self.memory.clear()
+        
+        result = [np.mean(self.episode_values) if self.episode_values else 0.0,
+                  np.std(self.episode_values) if self.episode_values else 0.0,
+                  np.mean(self.episode_rewards) if self.episode_rewards else 0.0]
+        
+        # 清空临时数据
+        self.reset_episode_data()
+        return result
 
     # def save_model(self, actor_path, critic_path):
     #     torch.save(self.actor.state_dict(), actor_path)
@@ -617,6 +636,11 @@ class PPO_Agent:
         # 新实例的其他运行时状态（如history、隐藏状态）已在构造函数中初始化，无需额外处理
         
         return cloned_agent
+    
+    def reset_episode_data(self):
+        """每回合开始时清空临时数据"""
+        self.episode_values.clear()
+        self.episode_rewards.clear()
 
 
 
