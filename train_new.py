@@ -401,12 +401,13 @@ class SelfPlay:
         config=train_config()
         for i in range (self.num_training):
             # 选择对手
+            dir=f'self_play_dir/number_{i}'
             opponent, opponent_id = self.get_opponent()
             # 初始化训练器（假设训练器接收当前智能体和环境）
-            trainer = Trainer(agent1=self.base_agent_1, agent2=opponent,config=config,dir=f'self_play_dir/number_{i}')
+            trainer = Trainer(agent1=self.base_agent_1, agent2=opponent,config=config,dir=dir)
             config=trainer.config
             # 执行训练
-            trainer.training()
+            trainer.training(save_dir=dir)
             
             mean_value_1 = np.mean(trainer.rewardlist_1[:][0])
             value_std_1 = np.mean(trainer.rewardlist_1[:][1])
