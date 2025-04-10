@@ -1,4 +1,4 @@
-from .cnn_new import Actor, Critic
+from .cnn import Actor, Critic
 from .fnn import fnnActor, fnnCritic
 
 def get_model(config):
