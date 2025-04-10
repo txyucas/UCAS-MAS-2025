@@ -81,7 +81,7 @@ class train_config:
     selfplay: bool = True
     eval_eps = 1 # 评估的回合数
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    max_steps: int = 400
+    max_steps: int = 1000
     num_episodes: int = 100
     batch_size: int = 8
     batch_per_epi:int=4 # 每个回合的批次数
@@ -90,5 +90,8 @@ class train_config:
     sp_curriculum_rate: float = 1.1      # 课程难度提升倍率
     grad_clip: float = 0.5               # 梯度裁剪阈值
     eval_against_pool_eps: int = 3        # 对策略池的评估回合数
+    train_both: bool = False
+    pool_size: int = 10
+    num_training: int = 500
     
     

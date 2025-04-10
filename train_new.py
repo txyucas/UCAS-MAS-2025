@@ -1,9 +1,5 @@
 import torch
-from olympics_engine.generator import create_scenario
 from olympics_engine.agent import *
-from olympics_engine.scenario import Running, table_hockey, football, wrestling, billiard, \
-    curling, billiard_joint, curling_long, curling_competition, Running_competition, billiard_competition, Seeks
-from olympics_engine.AI_olympics import AI_Olympics
 from configs.config import CnnConfig1, CnnConfig2,train_config
 import wandb
 from agents.ppo_new import PPO_Agent
@@ -12,9 +8,7 @@ import os
 import numpy as np
 from classify import get_batch
 
-
-wandb.init(project="MAS", config=train_config().__dict__, name='MAS_test2')  # 在脚本开始时进行初始化，而不是函数内部
-
+wandb.init(project="MAS-self-play", config=train_config().__dict__, name='MAS_self-play-1')  # 在脚本开始时进行初始化，而不是函数内部
 
 class Trainer:
     def __init__(self,agent1=PPO_Agent(config=CnnConfig1(),train_config=train_config()),agent2=PPO_Agent(config=CnnConfig2(),train_config=train_config()),config=train_config(),dir='self_play_dir'):
@@ -27,7 +21,7 @@ class Trainer:
         self.dir=dir
         self.rewardlist_1 = []
         self.rewardlist_2 = []
-        self.step_penalty = 1e-2
+        self.step_penalty = 0
 
     def _train_one_step(self):
         self.envs = get_batch(self.config.batch_size)
@@ -58,12 +52,12 @@ class Trainer:
             actions = [[action_agent1, action_agent2] for action_agent1, action_agent2 in zip(actions_agent1, actions_agent2)]
             next_states,rewards,dones=[],[],[]
             for env, action in zip(self.envs, actions):
-                try:
-                    step_result = env.step(action)
-                    if isinstance(step_result, tuple) and len(step_result) == 4:
-                        next_state, reward, done, _ = step_result
-                except:
+                if env.done ==False:
                     next_state, reward, done, _ = env.step(action)
+                else:
+                    next_state=[{'agent_obs':None},{'agent_obs':None}]
+                    reward=[0.0,0.0]
+                    done=True                    
                 next_states.append(next_state)
                 rewards.append(reward)
                 dones.append(done)
@@ -86,10 +80,10 @@ class Trainer:
             else:
                 self.agent2.memory.push((states_agent2, actions_agent2, log_probs_agent2, rewards_agent2, dones))
             agent1.episode_rewards.append(rewards_agent1)
-            agent2.episode_rewards.append(rewards_agent2)
+            agent2.episode_rewards.append(rewards_agent2) 
             states = next_states
             self.rewardlist_1.append(self.agent1.update())
-            self.rewardlist_2.append(self.agent2.update())
+            self.rewardlist_2.append(self.agent2.update())if self.config.train_both else None
             ep_reward_agent1 += rewards_agent1.mean()
             ep_reward_agent2 += rewards_agent2.mean()
             
@@ -133,12 +127,12 @@ class Trainer:
                     # 执行动作
                     next_states, rewards, dones = [], [], []
                     for env, action in zip(self.envs, actions):
-                        try:
-                            step_result = env.step(action)
-                            if isinstance(step_result, tuple) and len(step_result) == 4:
-                                next_state, reward, done, _ = step_result
-                        except:
+                        if env.done ==False:
                             next_state, reward, done, _ = env.step(action)
+                        else:
+                            next_state=[{'agent_obs':None},{'agent_obs':None}]
+                            reward=[0,0]
+                            done=True                    
                         next_states.append(next_state)
                         rewards.append(reward)
                         dones.append(done)
@@ -215,12 +209,12 @@ class Trainer:
                     actions = [[action_agent1, action_agent2] for action_agent1, action_agent2 in zip(actions_agent1, actions_random1)]
                     next_states, rewards, dones = [], [], []
                     for env, action in zip(self.envs, actions):
-                        try:
-                            step_result = env.step(action)
-                            if isinstance(step_result, tuple) and len(step_result) == 4:
-                                next_state, reward, done, _ = step_result
-                        except:
+                        if env.done ==False:
                             next_state, reward, done, _ = env.step(action)
+                        else:
+                            next_state=[{'agent_obs':None},{'agent_obs':None}]
+                            reward=[0,0]
+                            done=True                    
                         next_states.append(next_state)
                         rewards.append(reward)
                         dones.append(done)
@@ -249,12 +243,12 @@ class Trainer:
                     actions = [[action_agent1, action_agent2] for action_agent1, action_agent2 in zip(actions_random2, actions_agent2)]
                     next_states, rewards, dones = [], [], []
                     for env, action in zip(self.envs, actions):
-                        try:
-                            step_result = env.step(action)
-                            if isinstance(step_result, tuple) and len(step_result) == 4:
-                                next_state, reward, done, _ = step_result
-                        except:
+                        if env.done ==False:
                             next_state, reward, done, _ = env.step(action)
+                        else:
+                            next_state=[{'agent_obs':None},{'agent_obs':None}]
+                            reward=[0,0]
+                            done=True                    
                         next_states.append(next_state)
                         rewards.append(reward)
                         dones.append(done)
@@ -296,15 +290,20 @@ class Trainer:
             self._eval_one_batch()
             self._eval_random()
             self._renew_args()
-            
+            self._save_model(dir=self.dir)
+    def _save_model(self,dir):
+        if self.config.train_both:
+            self.agent1.save_model(dir,step=self.backup_step,number=1)
+            self.agent2.save_model(dir,step=self.backup_step,number=2)
+        else:
+            self.agent1.save_model(dir,step=self.backup_step,number=1)
             
 class SelfPlay:
     def __init__(
         self,
         base_agent_1,          # 初始智能体对象（必须实现 clone() 方法）
         base_agent_2,     # 可选的第二个初始智能体对象
-        pool_size=10,        # 对手池容量
-        num_training=20,  # 训练迭代次数
+        config=train_config(),  # 训练迭代次数
         # save_dir="selfplay_models",  # 模型存储目录
         device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu") # 设备（CPU/GPU）
     ):
@@ -317,11 +316,11 @@ class SelfPlay:
         """
         self.base_agent_1 = base_agent_1
         self.base_agent_2 = base_agent_2
-        self.pool_size = pool_size
+        self.pool_size = config.pool_size
         # self.save_dir = save_dir
         self.device = device
         self.current_iter = 0  
-        self.num_training = num_training
+        self.num_training = config.num_training
         self.piority_list = [0,0]
         
         # 初始化对手池（至少包含初始智能体）
@@ -395,7 +394,7 @@ class SelfPlay:
             trainer = Trainer(agent1=self.base_agent_1, agent2=opponent, config=train_config())
             
             # 执行训练
-            trainer.training(actor1_path="ckpt_selfplay/actor1.pth", actor2_path=f"ckp_selfplayt/actor2.pth", critic1_path=f"ckpt_selfplay/critic1.pth", critic2_path=f"ckpt_selfplay/critic2.pth")
+            trainer.training()
             
             mean_value_1 = np.mean(trainer.rewardlist_1[:,0])
             value_std_1 = np.mean(trainer.rewardlist_1[:,1])
@@ -416,9 +415,9 @@ if __name__ == "__main__":
     agent1 = PPO_Agent(config=CnnConfig1(),train_config=train_config())
     agent2 = PPO_Agent(config=CnnConfig2(),train_config=train_config())
     config=train_config()
-    trainer = Trainer(agent1=agent1, agent2=agent2, config=config)
-    trainer.training()
+    #trainer = Trainer(agent1=agent1, agent2=agent2, config=config)
+    #trainer.training()
     
     
-    #selfplay = SelfPlay(base_agent_1=agent1, base_agent_2=agent2)
-    #selfplay.training()
+    selfplay = SelfPlay(base_agent_1=agent1, base_agent_2=agent2,config=config)
+    selfplay.training()

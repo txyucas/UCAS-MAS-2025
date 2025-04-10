@@ -137,11 +137,32 @@ class PPO_Agent:
         self.episode_rewards.clear()
         
     def act(self,obs)->list: 
-        state = torch.tensor([ob['agent_obs'] for ob in obs], dtype=torch.float).to(self.device)
+        # 获取智能体观察的形状（用于创建零张量）
+        batch_size = len(obs)
+        # 找到一个非None的观察来获取形状
+        agent_obs_shape = None
+        for ob in obs:
+            if isinstance(ob['agent_obs'],np.ndarray)  or isinstance(ob['agent_obs'],torch.Tensor):
+                agent_obs_shape = ob['agent_obs'].shape
+                break
+        
+        # 如果所有观察都是None，返回全零动作
+        if agent_obs_shape is None :
+            return [[0, 0] for _ in range(batch_size)]
+        
+        # 创建批次状态张量
+        states = []
+        for ob in obs:
+            if isinstance(ob['agent_obs'],np.ndarray)  or isinstance(ob['agent_obs'],torch.Tensor):
+                states.append(ob['agent_obs'])
+            else:
+                # 为None的观察创建零张量
+                states.append(np.zeros(agent_obs_shape))
+        
+        state = torch.tensor(states, dtype=torch.float).to(self.device)
         if state.ndim == 2:
-            state = state.unsqueeze(0)
-            # add batch dimension
-        state= state.unsqueeze(1) #add channel dimension
+            state = state.unsqueeze(0)  # add batch dimension
+        state = state.unsqueeze(1)  # add channel dimension
         
         with torch.no_grad():
             if self.config.rnn_or_lstm=='lstm':
@@ -151,12 +172,21 @@ class PPO_Agent:
             else:
                 mu,sigma=self.actor(state)
         
-        #clip
-        action=mu
-        action = action.cpu().numpy()
-        action[:, 0] = np.clip(action[:, 0], -100, 200)  #motor
-        action[:, 1] = np.clip(action[:, 1], -30, 30)   #angle
-        return action.tolist()
+        # 处理动作
+        action = mu.cpu().numpy()
+        action[:, 0] = np.clip(action[:, 0], -100, 200)  # motor
+        action[:, 1] = np.clip(action[:, 1], -30, 30)    # angle
+        
+        # 为已完成的智能体（观察为None）设置[0,0]动作
+        full_actions = []
+        for i, ob in enumerate(obs):
+            if isinstance(ob['agent_obs'],np.ndarray)  or isinstance(ob['agent_obs'],torch.Tensor):
+                full_actions.append(action[i].tolist())
+            else:
+                full_actions.append([0, 0])
+        
+        return full_actions
+
     @torch.no_grad()
     def sample_action(self,obs): 
         '''
@@ -164,45 +194,81 @@ class PPO_Agent:
         you need to push the transition to memory after this function
         you also need to renew the episode_reward after that
         '''
-        state=torch.tensor([ob['agent_obs'] for ob in obs], dtype=torch.float).to(self.device).unsqueeze(1)
+        batch_size = len(obs)
+        
+        # 找到一个非None的观察来获取形状
+        agent_obs_shape = None
+        for ob in obs:
+            if  isinstance(ob['agent_obs'],np.ndarray)  or isinstance(ob['agent_obs'],torch.Tensor):
+                agent_obs_shape = ob['agent_obs'].shape
+                break
+        
+        # 如果所有观察都是None，返回全零动作、log_prob和状态
+        if agent_obs_shape is None:
+            zero_actions = [[0, 0] for _ in range(batch_size)]
+            zero_log_prob = torch.zeros(batch_size, device=self.device)
+            zero_state = torch.zeros((batch_size, 1, 1, 1), device=self.device)  # 最小维度的状态
+            return zero_actions, zero_log_prob, zero_state
+        
+        # 创建批次状态张量
+        states = []
+        none_mask = []  # 记录哪些观察是None
+        for ob in obs:
+            if isinstance(ob['agent_obs'],np.ndarray)  or isinstance(ob['agent_obs'],torch.Tensor):
+                states.append(ob['agent_obs'])
+                none_mask.append(False)
+            else:
+                # 为None的观察创建零张量
+                states.append(np.zeros(agent_obs_shape))
+                none_mask.append(True)
+        
+        state = torch.tensor(states, dtype=torch.float).to(self.device).unsqueeze(1)
         
         self.sample_count += 1
         
         if self.config.rnn_or_lstm=='lstm':
-            self.old_actor_hidden,self.old_actor_cell=self.actor_hidden,self.actor_cell
-            mu,sigma,(self.actor_hidden,self.actor_cell)=self.actor(state,self.actor_hidden,self.actor_cell)
+            self.old_actor_hidden, self.old_actor_cell = self.actor_hidden, self.actor_cell
+            mu, sigma, (self.actor_hidden, self.actor_cell) = self.actor(state, self.actor_hidden, self.actor_cell)
         elif self.config.rnn_or_lstm=='rnn':
-            self.old_actor_hidden=self.actor_hidden
-            mu,sigma,(self.actor_hidden)=self.actor(state,self.actor_hidden)
+            self.old_actor_hidden = self.actor_hidden
+            mu, sigma, (self.actor_hidden) = self.actor(state, self.actor_hidden)
         else:
-            mu,sigma=self.actor(state)
+            mu, sigma = self.actor(state)
         
-        # get log_prob
+        # 获取动作分布
         action_dist = torch.distributions.Normal(mu, sigma)
         action = action_dist.sample()
         log_prob = action_dist.log_prob(action).sum(dim=1)
 
         action_np = action.detach().cpu().numpy()
         
-        #clip
+        # 裁剪动作值
         action_np[:, 0] = np.clip(action_np[:, 0], -100, 200)
         action_np[:, 1] = np.clip(action_np[:, 1], -30, 30)
-        action = action_np.tolist()
         
-        #update episode_values
+        # 为观察为None的智能体设置[0,0]动作并将其log_prob置零
+        full_actions = []
+        for i, is_none in enumerate(none_mask):
+            if is_none:
+                full_actions.append([0, 0])
+                log_prob[i] = 0.0  # None观察的log_prob置零
+            else:
+                full_actions.append(action_np[i].tolist())
+        
+        # 更新episode_values
         with torch.no_grad():
             if self.config.rnn_or_lstm=='lstm':
-                self.old_critic_hidden,self.old_critic_cell=self.critic_hidden,self.critic_cell
-                current_value, (self.critic_hidden,self.critic_cell) = self.critic(state,self.critic_hidden,self.critic_cell)
+                self.old_critic_hidden, self.old_critic_cell = self.critic_hidden, self.critic_cell
+                current_value, (self.critic_hidden, self.critic_cell) = self.critic(state, self.critic_hidden, self.critic_cell)
             elif self.config.rnn_or_lstm=='rnn':
-                self.old_critic_hidden=self.critic_hidden
-                current_value, (self.critic_hidden) = self.critic(state,self.critic_hidden)
+                self.old_critic_hidden = self.critic_hidden
+                current_value, (self.critic_hidden) = self.critic(state, self.critic_hidden)
             else:
                 current_value = self.critic(state)
             current_value = current_value.mean()
             self.episode_values.append(current_value.item())
         
-        return action,log_prob,state
+        return full_actions, log_prob, state
     
     def _compute_advantage(self, rewards, values, dones, last_value):
         seq_len, batch_size = rewards.shape
@@ -220,60 +286,65 @@ class PPO_Agent:
             last_value = values[t]
 
         # 正确对优势函数进行归一化（基于批次）
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        try:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        except:
+            advantages = advantages - advantages.mean()
         return advantages
     
     def update(self):
-        
-        if self.sample_count%self.update_freq != 0 or self.sample_count==0:
+        if self.sample_count % self.update_freq != 0 or self.sample_count == 0:
             return
         
+        # 获取样本数据
         if self.config.rnn_or_lstm == 'lstm':
             old_states, old_actions, old_log_probs, old_rewards, old_dones, old_actor_hidden, old_actor_cell, old_critic_hidden, old_critic_cell = self.memory.sample(batch_size=self.config.sample_batch_size)
-
         elif self.config.rnn_or_lstm == 'rnn':
             old_states, old_actions, old_log_probs, old_rewards, old_dones, old_actor_hidden, old_critic_hidden = self.memory.sample(batch_size=self.config.sample_batch_size)
         else:
             old_states, old_actions, old_log_probs, old_rewards, old_dones = self.memory.sample(batch_size=self.config.sample_batch_size)
         
-        # Convert to tensors and reshape
+        # 转换为张量
         old_actions = torch.tensor(np.array(old_actions), device=self.device, dtype=torch.float)
         old_rewards = torch.tensor(np.array(old_rewards), device=self.device, dtype=torch.float)
         old_dones = torch.tensor(np.array(old_dones), device=self.device, dtype=torch.float)
         old_states = old_states
-        values=[]
+        
+        # 计算价值
+        values = []
         with torch.no_grad():
             if self.config.rnn_or_lstm=='lstm':
-                for (old_state,old_critic_hid,old_critic_cel)in zip(old_states,old_critic_hidden,old_critic_cell):
-                    value,_= self.critic(old_state,old_critic_hid,old_critic_cel)
+                for (old_state, old_critic_hid, old_critic_cel) in zip(old_states, old_critic_hidden, old_critic_cell):
+                    value, _ = self.critic(old_state, old_critic_hid, old_critic_cel)
                     values.append(value.cpu().numpy())
             elif self.config.rnn_or_lstm=='rnn':
-                for (old_state,old_critic_hid)in zip(old_states,old_critic_hidden):
-                    value,_= self.critic(old_state,old_critic_hid)
+                for (old_state, old_critic_hid) in zip(old_states, old_critic_hidden):
+                    value, _ = self.critic(old_state, old_critic_hid)
                     values.append(value.cpu().numpy())
             else:
                 for old_state in old_states:
-                    value= self.critic(old_state)
+                    value = self.critic(old_state)
                     values.append(value.cpu().numpy())
-                
-        values=torch.tensor(np.array(values), device=self.device, dtype=torch.float)
-
-        values=values.squeeze(-1).detach()
         
+        values = torch.tensor(np.array(values), device=self.device, dtype=torch.float)
+        values = values.squeeze(-1).detach()
+        
+        # 计算优势
         advantages = self._compute_advantage(rewards=old_rewards, values=values, dones=old_dones, last_value=torch.zeros_like(values[0]).to(self.device))
-        advantages=advantages.detach()
+        advantages = advantages.detach()
         
-        total_batch_size= min(self.config.sample_batch_size,self.config.update_freq)
-        accumulation_steps = min(self.config.sample_batch_size,self.config.update_freq)
+        total_batch_size = min(self.config.sample_batch_size, self.config.update_freq)
+        accumulation_steps = min(self.config.sample_batch_size, self.config.update_freq)
         
         for i in range(self.k_epochs):
             self.actor_optimizer.zero_grad()
             self.critic_optimizer.zero_grad()
-            total_loss=None
+            total_loss = None
+            
             for e in range(accumulation_steps):
-                #initialize batch
-                start_idx= e * 1
-                end_idx= min(start_idx + 1, total_batch_size)
+                # 初始化批次
+                start_idx = e * 1
+                end_idx = min(start_idx + 1, total_batch_size)
                 batch_states = old_states[start_idx]
                 batch_actions = old_actions[start_idx]
                 batch_log_probs = old_log_probs[start_idx]
@@ -281,50 +352,69 @@ class PPO_Agent:
                 batch_rewards = old_rewards[start_idx]
                 batch_dones = old_dones[start_idx]
                 
+                # 创建有效样本的掩码（未完成的智能体）
+                valid_mask = (1.0 - batch_dones).to(self.device)
+                
+                # 前向传播，获取动作分布
                 if self.config.rnn_or_lstm=='lstm':
-                    batch_actor_hidden=old_actor_hidden[start_idx]
-                    batch_actor_cell=old_actor_cell[start_idx]
-                    mu,sigma,_=self.actor(batch_states,batch_actor_hidden,batch_actor_cell)
+                    batch_actor_hidden = old_actor_hidden[start_idx]
+                    batch_actor_cell = old_actor_cell[start_idx]
+                    mu, sigma, _ = self.actor(batch_states, batch_actor_hidden, batch_actor_cell)
                 elif self.config.rnn_or_lstm=='rnn':
-                    batch_actor_hidden=old_actor_hidden[start_idx]
-                    mu,sigma,_=self.actor(batch_states[0],batch_actor_hidden)
+                    batch_actor_hidden = old_actor_hidden[start_idx]
+                    mu, sigma, _ = self.actor(batch_states[0], batch_actor_hidden)
                 else:
-                    mu,sigma=self.actor(batch_states[0])
-                    
-                # Get new log probabilities
+                    mu, sigma = self.actor(batch_states[0])
+                
+                # 获取新的动作概率
                 dist = torch.distributions.Normal(mu, sigma)
                 new_probs = dist.log_prob(batch_actions).sum(dim=1)
-                # Calculate the ratio
-                ratio=torch.exp(torch.clamp(new_probs-batch_log_probs, min=-20, max=20))
                 
-                # Calculate surrogate loss
+                # 计算比率
+                ratio = torch.exp(torch.clamp(new_probs - batch_log_probs, min=-20, max=20))
+                
+                # 计算策略损失（只考虑未完成的智能体）
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * batch_advantages
-                actor_loss = -torch.min(surr1, surr2).mean()+ self.entropy_coef * dist.entropy().mean()
                 
-                # Calculate value
+                # 应用掩码，已完成智能体的损失为0
+                actor_loss = (-torch.min(surr1, surr2) * valid_mask).sum() / (valid_mask.sum() + 1e-8)
+                
+                # 添加熵正则化项（同样只考虑未完成的智能体）
+                entropy = dist.entropy().sum(dim=1)  # 对每个智能体的动作维度求和
+                entropy_term = (entropy * valid_mask).sum() / (valid_mask.sum() + 1e-8)
+                actor_loss = actor_loss - self.entropy_coef * entropy_term
+                
+                # 计算价值损失
                 if self.config.rnn_or_lstm=='lstm':
-                    batch_critic_hidden=old_critic_hidden[start_idx]
-                    batch_critic_cell=old_critic_cell[start_idx]
-                    current_values,_ = self.critic(batch_states,batch_critic_hidden,batch_critic_cell)
+                    batch_critic_hidden = old_critic_hidden[start_idx]
+                    batch_critic_cell = old_critic_cell[start_idx]
+                    current_values, _ = self.critic(batch_states, batch_critic_hidden, batch_critic_cell)
                 elif self.config.rnn_or_lstm=='rnn':
-                    batch_critic_hidden=old_critic_hidden[start_idx]
-                    current_values,_ = self.critic(batch_states,batch_critic_hidden)
+                    batch_critic_hidden = old_critic_hidden[start_idx]
+                    current_values, _ = self.critic(batch_states, batch_critic_hidden)
                 else:
                     current_values = self.critic(batch_states)
                 
-                critic_loss= (current_values.squeeze(-1) - (batch_advantages + values.detach())).pow(2).mean()
+                # 价值损失同样只考虑未完成的智能体
+                critic_loss = (((current_values.squeeze(-1) - (batch_advantages + values[start_idx].detach())).pow(2)) * valid_mask).sum() / (valid_mask.sum() + 1e-8)
                 
-                total_loss= actor_loss + critic_loss if total_loss is None else total_loss + actor_loss + critic_loss
+                # 累积总损失
+                batch_loss = actor_loss + critic_loss
+                total_loss = batch_loss if total_loss is None else total_loss + batch_loss
+            
+            # 反向传播和优化
             total_loss.backward()
             
+            # 梯度裁剪
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=0.5)
             torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
             
+            # 更新参数
             self.actor_optimizer.step()
             self.critic_optimizer.step()
-            
-            
+        
+        # 清空内存和返回结果
         self.memory.clear()
         
         result = [np.mean(self.episode_values) if self.episode_values else 0.0,
@@ -333,6 +423,7 @@ class PPO_Agent:
         
         self._reset_episode_data()
         return result
+
     def save_model(self,dir,step,number,env_type='all'):
         if not os.path.exists(dir):
             os.makedirs(dir)
@@ -344,6 +435,26 @@ class PPO_Agent:
             'critic': self.critic.state_dict(),}
         }, os.path.join(dir, f'ppo_{step}.pth'))
         print(f"model saved to {os.path.join(dir, f'ppo_{step}.pth')}")
+    
+    def clone(self):
+        """创建当前PPO_Agent的深度拷贝，包括模型参数和优化器状态，但重置其他运行时状态"""
+        # 创建新实例，使用原配置和测试模式标志
+        cloned_agent = PPO_Agent(config=self.config,train_config=self.train_config,env_type=self.env_type)
+        
+        # 复制神经网络参数
+        cloned_agent.actor.load_state_dict(self.actor.state_dict())
+        cloned_agent.critic.load_state_dict(self.critic.state_dict())
+        
+        # 复制优化器状态（必须在模型参数加载之后进行）
+        cloned_agent.actor_optimizer.load_state_dict(self.actor_optimizer.state_dict())
+        cloned_agent.critic_optimizer.load_state_dict(self.critic_optimizer.state_dict())
+        
+        # 复制需要保留的训练进度参数
+        cloned_agent.sample_count = self.sample_count
+        
+        # 新实例的其他运行时状态（如history、隐藏状态）已在构造函数中初始化，无需额外处理
+        
+        return cloned_agent
 
 
 
