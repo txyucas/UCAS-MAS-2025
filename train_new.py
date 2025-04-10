@@ -8,7 +8,7 @@ import os
 import numpy as np
 from classify import get_batch
 
-wandb.init(project="MAS-self-play", config=train_config().__dict__, name='MAS_self-play-1')  # 在脚本开始时进行初始化，而不是函数内部
+wandb.init(project="MAS-final", config=train_config().__dict__, name='MAS-final')  # 在脚本开始时进行初始化，而不是函数内部
 
 class Trainer:
     def __init__(self,agent1=PPO_Agent(config=CnnConfig1(),train_config=train_config()),agent2=PPO_Agent(config=CnnConfig2(),train_config=train_config()),config=train_config(),dir='self_play_dir'):
@@ -21,7 +21,7 @@ class Trainer:
         self.dir=dir
         self.rewardlist_1 = []
         self.rewardlist_2 = []
-        self.step_penalty = 0
+        self.step_penalty = 0.02
 
     def _train_one_step(self):
         self.envs = get_batch(self.config.batch_size)
@@ -54,6 +54,9 @@ class Trainer:
             for env, action in zip(self.envs, actions):
                 if env.done ==False:
                     next_state, reward, done, _ = env.step(action)
+                    if  reward!=[0,0]:
+                        print(f"reward: {reward}")
+                    reward=[reward[0]-self.step_penalty,reward[1]-self.step_penalty]                    
                 else:
                     next_state=[{'agent_obs':None},{'agent_obs':None}]
                     reward=[0.0,0.0]
@@ -82,8 +85,10 @@ class Trainer:
             agent1.episode_rewards.append(rewards_agent1)
             agent2.episode_rewards.append(rewards_agent2) 
             states = next_states
-            self.rewardlist_1.append(self.agent1.update())
-            self.rewardlist_2.append(self.agent2.update())if self.config.train_both else None
+            if total_steps % self.agent1.config.update_freq == 0 and total_steps > 0:
+                self.rewardlist_1.append(self.agent1.update())
+            if total_steps % self.agent2.config.update_freq == 0 and total_steps > 0:
+                self.rewardlist_2.append(self.agent2.update(frozen=not self.config.train_both)) 
             ep_reward_agent1 += rewards_agent1.mean()
             ep_reward_agent2 += rewards_agent2.mean()
             
@@ -176,7 +181,7 @@ class Trainer:
         self.agent2.critic_optimizer.param_groups[0]['lr'] *= 0.95 if self.agent2.critic_optimizer.param_groups[0]['lr'] > 5e-5 else 5e-5
 
         # 减小 eps_clip
-        self.agent1.eps_clip *= 0.92 if self.agent1.eps_clip > 0.05 else 0.05
+        self.agent1.eps_clip *= 0.95 if self.agent1.eps_clip > 0.05 else 0.05
         self.agent2.eps_clip *= 0.95 if self.agent2.eps_clip > 0.05 else 0.05
 
         # 减小 entropy_coef
@@ -284,19 +289,19 @@ class Trainer:
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         self.dir=save_dir
-        for i in range(self.config.num_episodes):
+        for epi in range(self.config.num_episodes):
             for i in range(self.config.batch_per_epi):
                 self._train_one_step()
             self._eval_one_batch()
             self._eval_random()
             self._renew_args()
-            self._save_model(dir=self.dir)
-    def _save_model(self,dir):
+            self._save_model(dir=self.dir,step=epi)
+    def _save_model(self,dir,step):
         if self.config.train_both:
-            self.agent1.save_model(dir,step=self.backup_step,number=1)
-            self.agent2.save_model(dir,step=self.backup_step,number=2)
+            self.agent1.save_model(dir,step,number=1)
+            self.agent2.save_model(dir,step,number=2)
         else:
-            self.agent1.save_model(dir,step=self.backup_step,number=1)
+            self.agent1.save_model(dir,step,number=1)
             
 class SelfPlay:
     def __init__(
@@ -343,19 +348,25 @@ class SelfPlay:
             removed_agent = self.opponent_pool.pop(0)
             del removed_agent  # 显式释放内存
 
-    def get_opponent(self, epsilon=0.8):
+    def get_opponent(self, temperature=1.0):
         """
-        获取训练对手（带探索机制）
+        获取训练对手（按照优先级概率分布选取）
         Args:
-            epsilon: 使用最新智能体的概率（否则随机选历史对手）
+            temperature: 控制softmax分布的温度参数
         """
-        if random.random() < epsilon or len(self.opponent_pool) == 1:
-            maxindex = self.piority_list.index(max(self.piority_list))
-            return self.opponent_pool[maxindex], maxindex
+        if temperature == 0:
+            # 当 temperature 为 0 时，选择优先级最高的对手
+            opponent_index = np.argmax(self.piority_list)
         else:
-            random_index = random.randint(0, len(self.opponent_pool)-1)  # 生成随机索引
-            opponent = self.opponent_pool[random_index]          # 通过索引获取元素
-            return opponent, random_index  # 从历史中随机选择
+            # 计算softmax概率分布
+            priorities = np.array(self.piority_list)
+            exp_priorities = np.exp(priorities / temperature)
+            probabilities = exp_priorities / np.sum(exp_priorities)
+            
+            # 按照概率分布随机选择对手
+            opponent_index = np.random.choice(len(self.opponent_pool), p=probabilities)
+        
+        return self.opponent_pool[opponent_index], opponent_index
 
     def compute_piority(self, mean_value, value_std, mean_reward):
         """
@@ -387,21 +398,22 @@ class SelfPlay:
         3. 训练当前智能体
         4. 更新对手池
         """
+        config=train_config()
         for i in range (self.num_training):
             # 选择对手
             opponent, opponent_id = self.get_opponent()
             # 初始化训练器（假设训练器接收当前智能体和环境）
-            trainer = Trainer(agent1=self.base_agent_1, agent2=opponent, config=train_config())
-            
+            trainer = Trainer(agent1=self.base_agent_1, agent2=opponent,config=config,dir=f'self_play_dir/number_{i}')
+            config=trainer.config
             # 执行训练
             trainer.training()
             
-            mean_value_1 = np.mean(trainer.rewardlist_1[:,0])
-            value_std_1 = np.mean(trainer.rewardlist_1[:,1])
-            mean_reward_1 = np.mean(trainer.rewardlist_1[:,2])
-            mean_value_2 = np.mean(trainer.rewardlist_2[:,0])
-            value_std_2 = np.mean(trainer.rewardlist_2[:,1])
-            mean_reward_2 = np.mean(trainer.rewardlist_2[:,2])
+            mean_value_1 = np.mean(trainer.rewardlist_1[:][0])
+            value_std_1 = np.mean(trainer.rewardlist_1[:][1])
+            mean_reward_1 = np.mean(trainer.rewardlist_1[:][2])
+            mean_value_2 = np.mean(trainer.rewardlist_2[:][0])
+            value_std_2 = np.mean(trainer.rewardlist_2[:][1])
+            mean_reward_2 = np.mean(trainer.rewardlist_2[:][2])
             
             updatelist = np.array([mean_value_1, value_std_1, mean_reward_1, mean_value_2, value_std_2, mean_reward_2])
             

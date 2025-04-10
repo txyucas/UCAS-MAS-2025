@@ -20,7 +20,7 @@ class CnnConfig1:
     k_epochs: int = 4
     gamma: float = 0.99
     max_sqe_len: int = 10
-    eps_clip=0.15
+    eps_clip=0.20
     entropy_coef=0.02 # entropy coefficient
     update_freq=32
     buffer_size=32
@@ -28,11 +28,11 @@ class CnnConfig1:
     #train_config
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     batch_size: int = 8
-    actor_lr: float = 4e-4
-    critic_lr: float = 4e-4
+    actor_lr: float = 1e-3
+    critic_lr: float = 1e-3
     
      # 新增自博弈相关参数
-    opponent_pool_size: int = 5           # 对手池容量
+    opponent_pool_size: int = 15           # 对手池容量
     sp_update_interval: int = 50         # 对手池更新间隔（步数）
     sp_win_threshold: float = 0.65        # 胜率阈值（触发课程学习）
     sp_replay_ratio: float = 0.6          # 自博弈数据占比
@@ -67,13 +67,6 @@ class CnnConfig2:
     actor_lr: float = 4e-4
     critic_lr: float = 4e-4
     buffer_size=32
-    
-    # ... 同样修改（参数值可不同）...
-    opponent_pool_size: int = 5
-    sp_update_interval: int = 50
-    sp_win_threshold: float = 0.6
-    sp_replay_ratio: float = 0.55
-    policy_noise_std: float = 0.025
     sample_batch_size:int=8
 @dataclass
 class train_config:
@@ -81,17 +74,14 @@ class train_config:
     selfplay: bool = True
     eval_eps = 1 # 评估的回合数
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    max_steps: int = 1000
-    num_episodes: int = 100
+    max_steps: int = 800
+    num_episodes: int = 3
     batch_size: int = 8
-    batch_per_epi:int=4 # 每个回合的批次数
+    batch_per_epi:int=5 # 每个回合的批次数
     
      # 新增全局训练参数
-    sp_curriculum_rate: float = 1.1      # 课程难度提升倍率
-    grad_clip: float = 0.5               # 梯度裁剪阈值
-    eval_against_pool_eps: int = 3        # 对策略池的评估回合数
     train_both: bool = False
-    pool_size: int = 10
-    num_training: int = 500
+    pool_size: int = 20
+    num_training: int = 1000
     
     

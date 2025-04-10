@@ -174,3 +174,8 @@ easy-rl/
 olympics_engine/
 ckpt/
 .pth
+models/__pycache__/
+olympics_engine/
+self_play_dir/
+wandb/
+__pycache__/
