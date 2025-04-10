@@ -16,9 +16,9 @@ class FnnBlock(nn.Module):
         data = self.dropout(data)
         return data
 
-class Actor(nn.Module):
+class fnnActor(nn.Module):
     def __init__(self, config):
-        super(Actor, self).__init__()
+        super(fnnActor, self).__init__()
         lazy_layers = OrderedDict()
         last_hidden_dim = config.input_dim
         for i, hidden_dim in enumerate(config.model_info):
@@ -37,9 +37,9 @@ class Actor(nn.Module):
         x[1]=x[1]*150+50
         return x
 
-class Critic(nn.Module):
+class fnnCritic(nn.Module):
     def __init__(self, config):
-        super(Critic, self).__init__()
+        super(fnnCritic, self).__init__()
         lazy_layers = OrderedDict()
         last_hidden_dim = config.input_dim
         for i, hidden_dim in enumerate(config.model_info):

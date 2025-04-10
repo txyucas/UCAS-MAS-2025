@@ -242,28 +242,6 @@ class PPO_Agent:
         
         return action_np.tolist()
 
-    # @torch.no_grad()
-    # def act(self, obs):
-    #     state = torch.tensor(obs['agent_obs'], dtype=torch.float).to(self.device)
-    #     state = state.unsqueeze(0)  # 添加 batch 维度
-    #     sequence = self.update_history_sequence(state)
-    #     mu, sigma, (self.actor_h, self.actor_c) = self.actor(sequence, self.actor_h, self.actor_c)
-    #     self.isnan=False
-    #     if torch.isnan(mu).any() or torch.isnan(sigma).any() or torch.isinf(mu).any() or torch.isinf(sigma).any():
-    #         self.isnan=True
-    #         print("警告: 动作分布包含异常值，重置为默认值")
-    #         mu = torch.zeros_like(mu)
-    #         sigma = torch.ones_like(sigma) * 0.1
-    #     action_dist = torch.distributions.Normal(mu, sigma)
-    #     action = action_dist.sample()
-    #     action = action.cpu().numpy()
-        
-        
-        # # 添加截断逻辑
-        # action[0, 1] = np.clip(action[0, 1], -30, 30)  # 第一维范围限制为 [-30, 30]
-        # action[0, 0] = np.clip(action[0,0], -100, 200)  # 第二维范围限制为 [-100, 200]
-        
-        # return action[0].tolist()
         
     def act(self, obs, test_mode=False, exploration_scale=0.3):
         """
@@ -316,36 +294,6 @@ class PPO_Agent:
         
         return action[0].tolist()
 
-    # def compute_advantage(self, gamma, lmbda, td_delta):
-    #     td_delta = td_delta.detach().numpy()
-    #     advantage_list = []
-    #     advantage = 0.0
-    #     for delta in td_delta[::-1]:
-    #         advantage = gamma * lmbda * advantage + delta
-    #         advantage_list.append(advantage)
-    #     advantage_list.reverse()
-    #     return torch.tensor(advantage_list, dtype=torch.float)
-    
-    # def compute_advantage(self, rewards, values, dones, last_value):
-    #     """实现广义优势估计(GAE)"""
-    #     advantages = torch.zeros_like(rewards)
-    #     last_advantage = 0
-    #     last_value = last_value.detach()
-        
-    #     for t in reversed(range(len(rewards))):
-    #         if dones[t]:
-    #             delta = rewards[t] - values[t]
-    #             last_advantage = 0  # 终止状态不bootstrap
-    #         else:
-    #             delta = rewards[t] + self.gamma * last_value - values[t]
-    #             last_value = values[t]
-                
-    #         advantages[t] = delta + self.gamma * self.lmbda * last_advantage
-    #         last_advantage = advantages[t]
-    
-    #     # 标准化优势函数
-    #     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-    #     return advantages
     
     def compute_advantage(self, rewards, values, dones, last_value):
         """广义优势估计（GAE），支持批量处理"""
@@ -465,13 +413,7 @@ class PPO_Agent:
                 values = values.squeeze(-1)
             values = values.view(batch_size, seq_len)
         
-        # # 处理其他张量
-        # old_actions = torch.tensor(np.array(old_actions), device=self.device, dtype=torch.float)
-        # old_actions = old_actions.view(batch_size, seq_len, -1)
-        # old_rewards = torch.tensor(old_rewards, device=self.device, dtype=torch.float)
-        # old_dones = torch.tensor(old_dones, device=self.device, dtype=torch.float)
-        # old_log_probs = torch.tensor(old_log_probs, device=self.device, dtype=torch.float)
-        # old_log_probs = old_log_probs.view(batch_size, seq_len)
+
         
         old_actions = torch.tensor(np.array(old_actions), device=self.device, dtype=torch.float)
         old_actions = old_actions.view(batch_size, seq_len, -1)  # (batch, seq, action_dim)
@@ -649,7 +591,7 @@ class PPO_Agent:
 
 
 
-class HierarchicalReplay(SequentialPGReplay):
+class   HierarchicalReplay(SequentialPGReplay):
     def __init__(self, sequence_length=8):
         super().__init__(sequence_length)
         self.high_buffer = []  # 存储高层经验

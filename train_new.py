@@ -6,102 +6,94 @@ from olympics_engine.scenario import Running, table_hockey, football, wrestling,
 from olympics_engine.AI_olympics import AI_Olympics
 from configs.config import CnnConfig1, CnnConfig2,train_config
 import wandb
-from agents.PPO import PPO_Agent
+from agents.ppo_new import PPO_Agent
 from olympics_engine.agent import *
 import os
 import numpy as np
-# import datetime
-# import glob
-game_map_dict = {
-     'running': Running,
-     'table-hockey': table_hockey,
-     'football': football,
-     'wrestling': wrestling,
-    # #'billiard': billiard,
-     'curling': curling,
-}
+from classify import get_batch
 
-wandb.init(project="MAS", config=train_config().__dict__, name='MAS_self_paly')  # 在脚本开始时进行初始化，而不是函数内部
 
-def initialize_game(map):
-    
-    Gamemap = create_scenario(map)
-    if map in game_map_dict:
-        game = game_map_dict[map](Gamemap)
-        agent_num = 2
-    else:
-        raise ValueError(f"Unknown map: {map}")
-    return game, agent_num
-
-def get_random_game(game_map):
-    """随机选择游戏地图和智能体数量"""
-    game_map = random.choice(list(game_map.keys()))
-    game, agent_num = initialize_game(game_map)
-    return game, agent_num
-    
-
+wandb.init(project="MAS", config=train_config().__dict__, name='MAS_test2')  # 在脚本开始时进行初始化，而不是函数内部
 
 
 class Trainer:
-    def __init__(self,agent1=PPO_Agent(config=CnnConfig1()),agent2=PPO_Agent(config=CnnConfig2()),config=train_config(),actor1_path="backup_actor1.pth", actor2_path="backup_actor2.pth", critic1_path="backup_critic1.pth", critic2_path="backup_critic2.pth"):
+    def __init__(self,agent1=PPO_Agent(config=CnnConfig1(),train_config=train_config()),agent2=PPO_Agent(config=CnnConfig2(),train_config=train_config()),config=train_config(),dir='self_play_dir'):
         self.agent1=agent1
         self.agent2=agent2
         self.config = config
         self.random_agent=random_agent()
-        self.actor1_path=actor1_path
-        self.actor2_path=actor2_path
-        self.critic1_path=critic1_path
-        self.critic2_path=critic2_path
+        if not os.path.exists(dir):
+            os.makedirs(dir)
+        self.dir=dir
         self.rewardlist_1 = []
         self.rewardlist_2 = []
         self.step_penalty = 1e-2
 
     def _train_one_step(self):
+        self.envs = get_batch(self.config.batch_size)
         # 保存当前模型状态作为备份
         if hasattr(self, 'backup_step') and self.backup_step % 20 == 0:
-            self._save_model_checkpoint(self.actor1_path, self.actor2_path, self.critic1_path, self.critic2_path)
-        
+            self.agent1.save_model(self.dir,step=self.backup_step,number=1)
+            self.agent2.save_model(self.dir,step=self.backup_step,number=2)
         self.agent1.reset()
         self.agent2.reset()
         self.agent1.sample_count = 0
         self.agent2.sample_count = 0
         ep_reward_agent1 = 0
         ep_reward_agent2 = 0
-        state = self.env.reset()
-        torch.cuda.empty_cache()  # 清理 GPU 缓存
+        states = [env.reset() for env in self.envs]  # 重置环境
         
-
+        for env in self.envs:
+            env.max_step = self.config.max_steps
+        torch.cuda.empty_cache()  # 清理 GPU 缓存
         total_steps = 0
         
-        for _ in range(69 if self.env.game_name == 'curling' else self.config.max_steps):
+        
+        for _ in range(self.config.max_steps*6):
             total_steps += 1
-            action_agent1 = self.agent1.sample_action(state[0])[0]
-            action_agent2 = self.agent2.sample_action(state[1])[0]
-            action = [action_agent1, action_agent2]
-            next_state, reward, done, _ = self.env.step(action)
+            old_states_agent1=[state[0] for state in states]
+            old_states_agent2=[state[1] for state in states]
+            actions_agent1,log_probs_agent1,states_agent1 = self.agent1.sample_action(old_states_agent1)
+            actions_agent2,log_probs_agent2,states_agent2= self.agent2.sample_action(old_states_agent2)
+            actions = [[action_agent1, action_agent2] for action_agent1, action_agent2 in zip(actions_agent1, actions_agent2)]
+            next_states,rewards,dones=[],[],[]
+            for env, action in zip(self.envs, actions):
+                try:
+                    step_result = env.step(action)
+                    if isinstance(step_result, tuple) and len(step_result) == 4:
+                        next_state, reward, done, _ = step_result
+                except:
+                    next_state, reward, done, _ = env.step(action)
+                next_states.append(next_state)
+                rewards.append(reward)
+                dones.append(done)
              # 添加步数惩罚（核心修改）
             step_punishment = self.step_penalty * total_steps / self.config.max_steps
-            reward_agent1 = reward[0] - step_punishment 
-            reward_agent2 = reward[1] - step_punishment
+            rewards_agent1 = np.array([reward[0] - step_punishment for reward in rewards])
+            rewards_agent2 = np.array([reward[1] - step_punishment for reward in rewards])
         
             # reward_agent1, reward_agent2 = reward[0], reward[1]
-            reward_agent1 +=0 if agent1.isnan==False else -10
-            reward_agent2 +=0 if agent2.isnan==False else -10
-            self.agent1.memory.push((state[0], action_agent1, self.agent1.log_probs, reward_agent1, done))
-            self.agent2.memory.push((state[1], action_agent2, self.agent2.log_probs, reward_agent2, done))
-            state = next_state
+            if self.agent1.config.rnn_or_lstm=='lstm':
+                self.agent1.memory.push((states_agent1, actions_agent1, log_probs_agent1, rewards_agent1, dones,self.agent1.actor_hidden,self.agent1.actor_cell,self.agent1.critic_hidden,self.agent1.critic_cell))
+            elif self.agent1.config.rnn_or_lstm=='rnn':
+                self.agent1.memory.push((states_agent1, actions_agent1, log_probs_agent1, rewards_agent1, dones,self.agent1.actor_hidden,self.agent1.critic_hidden))
+            else:
+                self.agent1.memory.push((states_agent1, actions_agent1, log_probs_agent1, rewards_agent1, dones))
+            if self.agent2.config.rnn_or_lstm=='lstm':
+                self.agent2.memory.push((states_agent2, actions_agent2, log_probs_agent2, rewards_agent2, dones,self.agent2.actor_hidden,self.agent2.actor_cell,self.agent2.critic_hidden,self.agent2.critic_cell))
+            elif self.agent2.config.rnn_or_lstm=='rnn':
+                self.agent2.memory.push((states_agent2, actions_agent2, log_probs_agent2, rewards_agent2, dones,self.agent2.actor_hidden,self.agent2.critic_hidden))
+            else:
+                self.agent2.memory.push((states_agent2, actions_agent2, log_probs_agent2, rewards_agent2, dones))
+            agent1.episode_rewards.append(rewards_agent1)
+            agent2.episode_rewards.append(rewards_agent2)
+            states = next_states
             self.rewardlist_1.append(self.agent1.update())
             self.rewardlist_2.append(self.agent2.update())
-            ep_reward_agent1 += reward_agent1
-            ep_reward_agent2 += reward_agent2
+            ep_reward_agent1 += rewards_agent1.mean()
+            ep_reward_agent2 += rewards_agent2.mean()
             
-            # 检测是否有NaN值出现
-            if self.agent1.isnan or self.agent2.isnan:
-                print("检测到NaN值，尝试从备份恢复...")
-                self._restore_from_checkpoint()
-                return  # 跳过当前步骤
-
-            if done:
+            if all(dones):
                 break
         self.agent1.memory.clear()  # 清空缓冲区
         self.agent2.memory.clear()  # 清空缓冲区
@@ -111,29 +103,6 @@ class Trainer:
             "train_reward_agent1": ep_reward_agent1,
             "train_reward_agent2": ep_reward_agent2
         })
-    
-    def _save_model_checkpoint(self, actor1_path, actor2_path, critic1_path, critic2_path):
-        torch.save(self.agent1.actor.state_dict(), actor1_path)
-        torch.save(self.agent2.actor.state_dict(), actor2_path)
-        torch.save(self.agent1.critic.state_dict(), critic1_path)
-        torch.save(self.agent2.critic.state_dict(), critic2_path)
-    
-    def _restore_from_checkpoint(self):
-        try:
-            self.agent1.actor.load_state_dict(torch.load("backup_actor1.pth"))
-            self.agent2.actor.load_state_dict(torch.load("backup_actor2.pth"))
-            self.agent1.critic.load_state_dict(torch.load("backup_critic1.pth"))
-            self.agent2.critic.load_state_dict(torch.load("backup_critic2.pth"))
-            print("成功从备份恢复模型")
-            
-            # 重置优化器状态
-            self.agent1.actor_optimizer = torch.optim.Adam(self.agent1.actor.parameters(), lr=self.agent1.actor_optimizer.param_groups[0]['lr'])
-            self.agent1.critic_optimizer = torch.optim.Adam(self.agent1.critic.parameters(), lr=self.agent1.critic_optimizer.param_groups[0]['lr'])
-            self.agent2.actor_optimizer = torch.optim.Adam(self.agent2.actor.parameters(), lr=self.agent2.actor_optimizer.param_groups[0]['lr'])
-            self.agent2.critic_optimizer = torch.optim.Adam(self.agent2.critic.parameters(), lr=self.agent2.critic_optimizer.param_groups[0]['lr'])
-        except:
-            print("恢复失败，继续使用当前模型")
-    
     
     def _eval_one_batch(self):
         """评估一个批次（两个智能体对抗）"""
@@ -148,25 +117,42 @@ class Trainer:
                 agent1.reset()
                 agent2.reset()
                 eval_reward_agent2 = 0
-                self.env,num_agent=get_random_game(game_map_dict)  # 随机选择游戏地图和智能体数量
-                state = self.env.reset()  # 重置环境/
+                self.envs=get_batch(self.config.batch_size)  # 随机选择游戏地图和智能体数量
+                states = [env.reset() for env in self.envs]  # 重置环境
+                
+                for env in self.envs:
+                    env.max_step = self.config.max_steps
                 #self.env.render()
-                for _ in range(65 if self.env.game_name=='curling'else self.config.max_steps ):
+                for _ in range( self.config.max_steps*6):
                     # 两个智能体分别选择动作
-                    action_agent1 = self.agent1.act(state[0])  # 智能体1选择动作
-                    action_agent2 = self.agent2.act(state[1])  # 智能体2选择动作
-    
-                    # 环境执行动作，返回新的状态和奖励
-                    next_state, (reward_agent1, reward_agent2), done, _ = self.env.step([action_agent1, action_agent2])
+                    old_states_agent1=[state[0] for state in states]
+                    old_states_agent2=[state[1] for state in states]
+                    actions_agent1= self.agent1.act(old_states_agent1)
+                    actions_agent2= self.agent2.act(old_states_agent2)
+                    actions = [[action_agent1, action_agent2] for action_agent1, action_agent2 in zip(actions_agent1, actions_agent2)]
+                    # 执行动作
+                    next_states, rewards, dones = [], [], []
+                    for env, action in zip(self.envs, actions):
+                        try:
+                            step_result = env.step(action)
+                            if isinstance(step_result, tuple) and len(step_result) == 4:
+                                next_state, reward, done, _ = step_result
+                        except:
+                            next_state, reward, done, _ = env.step(action)
+                        next_states.append(next_state)
+                        rewards.append(reward)
+                        dones.append(done)
     
                     # 更新状态
-                    state = next_state
-    
+                    states = next_states
+                    # 计算奖励
+                    rewards_agent1 = np.array([reward[0] for reward in rewards])
+                    rewards_agent2 = np.array([reward[1] for reward in rewards])
                     # 累加奖励
-                    eval_reward_agent1 += reward_agent1
-                    eval_reward_agent2 += reward_agent2
-    
-                    if done:
+                    eval_reward_agent1 += rewards_agent1.mean()
+                    eval_reward_agent2 += rewards_agent2.mean()
+
+                    if all(dones):
                         break
                 self.agent1.memory.clear()  # 清空缓冲区
                 self.agent2.memory.clear()
@@ -186,6 +172,7 @@ class Trainer:
             })
     
             print(f"评估结果 - 智能体1平均奖励: {mean_eval_reward_agent1:.2f}, 智能体2平均奖励: {mean_eval_reward_agent2:.2f}")
+            
     def _renew_args(self):
         """随着训练的进行，逐渐降低学习率、eps_clip 和 entropy_coef"""
         # 减小学习率
@@ -201,7 +188,7 @@ class Trainer:
         # 减小 entropy_coef
         self.agent1.entropy_coef *= 0.97 if self.agent1.entropy_coef > 0.005 else 0.005
         self.agent2.entropy_coef *= 0.97 if self.agent2.entropy_coef > 0.005 else 0.005 
-        self.config.max_steps=int(self.config.max_steps*0.98) if self.config.max_steps > 500 else 500
+        self.config.max_steps=int(self.config.max_steps*0.98) if self.config.max_steps > 400 else 400
     
     def _eval_random(self):
         """评估随机智能体"""
@@ -212,25 +199,38 @@ class Trainer:
             total_random_eval_reward_agent2 = 0
 
             for _ in range(self.config.eval_eps):
-                self.env,num_agent=get_random_game(game_map_dict)  # 随机选择游戏地图和智能体数量
+                self.envs=get_batch(self.config.batch_size)  # 随机选择游戏地图和智能体数量
                 # 智能体1与随机智能体对抗
                 agent1.reset()
                 agent2.reset()
                 eval_reward_agent1 = 0
                 eval_reward_random1 = 0
-                state = self.env.reset()  # 重置环境
+                states= [env.reset() for env in self.envs]  # 重置环境
 
-                for _ in range(69 if self.env.game_name=='curling'else self.config.max_steps ):
-                    action_agent1 = self.agent1.act(state[0])  # 智能体1选择动作
-                    action_random1 = self.random_agent.act(obs=state[1])  # 随机智能体选择动作
+                for _ in range(self.config.max_steps*6 ):
+                    old_states_agent1=[state[0] for state in states]
+                    old_states_agent2=[state[1] for state in states]
+                    actions_agent1 = self.agent1.act(old_states_agent1)  # 智能体1选择动作
+                    actions_random1 = [self.random_agent.act(old_state_agent2) for old_state_agent2 in old_states_agent2] # 随机智能体选择动作
+                    actions = [[action_agent1, action_agent2] for action_agent1, action_agent2 in zip(actions_agent1, actions_random1)]
+                    next_states, rewards, dones = [], [], []
+                    for env, action in zip(self.envs, actions):
+                        try:
+                            step_result = env.step(action)
+                            if isinstance(step_result, tuple) and len(step_result) == 4:
+                                next_state, reward, done, _ = step_result
+                        except:
+                            next_state, reward, done, _ = env.step(action)
+                        next_states.append(next_state)
+                        rewards.append(reward)
+                        dones.append(done)
+                    states = next_states
+                    rewards_agent1 = np.array([reward[0] for reward in rewards])
+                    rewards_random1 = np.array([reward[1] for reward in rewards])
+                    eval_reward_agent1 += rewards_agent1.mean()
+                    eval_reward_random1 += rewards_random1.mean()
 
-                    next_state, (reward_agent1, reward_random1), done, _ = self.env.step([action_agent1, action_random1])
-                    state = next_state
-
-                    eval_reward_agent1 += reward_agent1
-                    eval_reward_random1 += reward_random1
-
-                    if done:
+                    if all(dones):
                         break
 
                 total_random_eval_reward_agent1 += eval_reward_agent1
@@ -238,19 +238,35 @@ class Trainer:
                 # 智能体2与随机智能体对抗
                 eval_reward_agent2 = 0
                 eval_reward_random2 = 0
-                state = self.env.reset()  # 重置环境
+                states= [env.reset() for env in self.envs]  # 重置环境
 
-                for _ in range(65 if self.env.game_name=='curling' else self.config.max_steps):
-                    action_random2 = self.random_agent.act(state[0])  # 随机智能体选择动作
-                    action_agent2 = self.agent2.act(state[1])  # 智能体2选择动作
+                for _ in range(self.config.max_steps*6):
+                    old_states_agent1=[state[0] for state in states]
+                    old_states_agent2=[state[1] for state in states]
+                    actions_random2= [self.random_agent.act(old_state_agent1) for old_state_agent1 in old_states_agent1] # 随机智能体选择动作
+                    actions_agent2 = self.agent2.act(old_states_agent2)
+                    
+                    actions = [[action_agent1, action_agent2] for action_agent1, action_agent2 in zip(actions_random2, actions_agent2)]
+                    next_states, rewards, dones = [], [], []
+                    for env, action in zip(self.envs, actions):
+                        try:
+                            step_result = env.step(action)
+                            if isinstance(step_result, tuple) and len(step_result) == 4:
+                                next_state, reward, done, _ = step_result
+                        except:
+                            next_state, reward, done, _ = env.step(action)
+                        next_states.append(next_state)
+                        rewards.append(reward)
+                        dones.append(done)
 
-                    next_state, (reward_random2, reward_agent2), done, _ = self.env.step([action_random2, action_agent2])
-                    state = next_state
+                    states = next_states
+                    rewards_agent2 = np.array([reward[0] for reward in rewards])
+                    rewards_random2 = np.array([reward[1] for reward in rewards])
+                    
+                    eval_reward_agent2 += rewards_agent2.mean()
+                    eval_reward_random2 += rewards_random2.mean()
 
-                    eval_reward_agent2 += reward_agent2
-                    eval_reward_random2 += reward_random2
-
-                    if done:
+                    if all(dones):
                         break
 
                 total_random_eval_reward_agent2 += eval_reward_agent2
@@ -270,17 +286,17 @@ class Trainer:
 
             print(f"随机对抗评估结果 - 智能体1平均奖励: {mean_random_eval_reward_agent1:.2f}, "
                   f"智能体2平均奖励: {mean_random_eval_reward_agent2:.2f}")
-    def training(self,actor1_path=None, actor2_path=None, critic1_path=None, critic2_path=None):
+    def training(self,save_dir='self_play_dir'):
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        self.dir=save_dir
         for i in range(self.config.num_episodes):
             for i in range(self.config.batch_per_epi):
-                self.env, agent_num = get_random_game(game_map_dict)
                 self._train_one_step()
             self._eval_one_batch()
             self._eval_random()
             self._renew_args()
-            # Save the models
-            self.agent1.save_model(actor1_path, critic1_path)
-            self.agent2.save_model(actor2_path, critic2_path)
+            
             
 class SelfPlay:
     def __init__(
@@ -397,10 +413,12 @@ class SelfPlay:
             
 if __name__ == "__main__":
     # Initialize the game and agents
-    agent1 = PPO_Agent(config=CnnConfig1(),istest=False,)
-    agent2 = PPO_Agent(config=CnnConfig2(),istest=False,)
-    # trainer = Trainer(agent1=agent1, agent2=agent2, config=train_config())
+    agent1 = PPO_Agent(config=CnnConfig1(),train_config=train_config())
+    agent2 = PPO_Agent(config=CnnConfig2(),train_config=train_config())
+    config=train_config()
+    trainer = Trainer(agent1=agent1, agent2=agent2, config=config)
+    trainer.training()
     
     
-    selfplay = SelfPlay(base_agent_1=agent1, base_agent_2=agent2)
-    selfplay.training()
+    #selfplay = SelfPlay(base_agent_1=agent1, base_agent_2=agent2)
+    #selfplay.training()

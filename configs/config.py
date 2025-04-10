@@ -9,19 +9,25 @@ class CnnConfig1:
     input_channel: int = 1
     model_info: list[tuple[int, int]] = field(default_factory=lambda: [(8, 3), (32, 3), (48, 5)])
     lstm_hidden_size: int = 48
+    model: str = "cnn"
+    is_train: bool = True
+    
+    rnn_or_lstm: str = "lstm" # rnn or lstm or none
+    rnn_hidden_size: int = 48 
     
     #rl_config
     lmbda: float = 0.9
-    k_epochs: int = 10
+    k_epochs: int = 4
     gamma: float = 0.99
     max_sqe_len: int = 10
     eps_clip=0.15
     entropy_coef=0.02 # entropy coefficient
-    update_freq=20
-    
+    update_freq=32
+    buffer_size=32
+    sample_batch_size=8
     #train_config
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    batch_size: int = 32
+    batch_size: int = 8
     actor_lr: float = 4e-4
     critic_lr: float = 4e-4
     
@@ -40,21 +46,27 @@ class CnnConfig2:
     input_channel: int = 1
     model_info: list[tuple[int, int]] = field(default_factory=lambda: [(8, 3), (32, 3), (48, 5)])
     lstm_hidden_size: int = 48
+    model:str = "cnn" # cnn or lstm or none
+    
+    rnn_or_lstm: str = "lstm" # rnn or lstm or none
+    rnn_hidden_size: int = 48 
+    is_train: bool = True
     
     #rl_config
     lmbda: float = 0.9
-    k_epochs: int = 10
+    k_epochs: int = 8
     gamma: float = 0.99
     max_sqe_len: int = 10
     eps_clip=0.12
     entropy_coef=0.015 # entropy coefficient
-    update_freq=20
+    update_freq=32
     
     #train_config
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    batch_size: int = 32
+    batch_size: int = 8
     actor_lr: float = 4e-4
     critic_lr: float = 4e-4
+    buffer_size=32
     
     # ... 同样修改（参数值可不同）...
     opponent_pool_size: int = 5
@@ -62,16 +74,17 @@ class CnnConfig2:
     sp_win_threshold: float = 0.6
     sp_replay_ratio: float = 0.55
     policy_noise_std: float = 0.025
-    
+    sample_batch_size:int=8
 @dataclass
 class train_config:
     #train_config
-    
-    eval_eps = 5 # 评估的回合数
+    selfplay: bool = True
+    eval_eps = 1 # 评估的回合数
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    max_steps: int = 500
+    max_steps: int = 400
     num_episodes: int = 100
-    batch_per_epi:int=30 # 每个回合的批次数
+    batch_size: int = 8
+    batch_per_epi:int=4 # 每个回合的批次数
     
      # 新增全局训练参数
     sp_curriculum_rate: float = 1.1      # 课程难度提升倍率
