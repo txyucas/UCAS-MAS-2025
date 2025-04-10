@@ -6,7 +6,7 @@ from agents.PPO import PPO_Agent
 from olympics_engine.agent import *
 import os
 import numpy as np
-from classify import get_batch
+from models.classify import get_batch
 
 wandb.init(project="MAS-final", config=train_config().__dict__, name='MAS-final')  # 在脚本开始时进行初始化，而不是函数内部
 

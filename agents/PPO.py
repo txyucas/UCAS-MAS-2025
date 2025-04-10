@@ -6,7 +6,7 @@ import os
 import random
 from collections import deque
 from models.get_model import get_model
-from classify import Classify
+from models.classify import Classify
 
 class ReplayBufferQue:
     '''DQN的经验回放池，每次采样batch_size个样本'''
