@@ -2,3 +2,4 @@ numpy
 torch
 pygame>=2.0.2
 gym
+wandb

@@ -181,3 +181,4 @@ wandb/
 __pycache__/
 self_paly_dir_bigger/
 self_play_dir_with_random/
+running/

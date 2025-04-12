@@ -59,10 +59,12 @@ class Actor(nn.Module):
             self.linersize=flattened_size           
 
         # 全连接层
-        self.liner=nn.Linear(self.linersize, self.linersize)
+        self.liner1=nn.Linear(self.linersize, self.linersize)
+        self.liner2=nn.Linear(self.linersize, self.linersize)
         self.fc_mu = nn.Linear(self.linersize, 2)
         self.fc_std = nn.Linear(self.linersize, 2)
-        self.output_activation = nn.Sigmoid()
+        self.output_activation = nn.Tanh()
+        self.relu= nn.ReLU()
 
     def forward(self, x, h_state=None, c_state=None,istest=True):
         # 确保输入维度为 (batch_size,  channels, height, width)
@@ -85,8 +87,10 @@ class Actor(nn.Module):
             return mu, std
 
     def _get_forward(self, x):
-        x= self.liner(x)
+        x= self.liner1(x)
         x= self.relu(x)
+        x= self.liner2(x)+x
+        x= self.relu(x)*4
         mu_raw= self.output_activation(self.fc_mu(x))
         
         #去掉第一个维度
@@ -94,8 +98,9 @@ class Actor(nn.Module):
         mu = torch.zeros_like(mu_raw)
         mu[:, 0] = mu_raw[:, 0] * 150 + 50
         mu[:, 1] = mu_raw[:, 1] * 30
-        std = nn.functional.softplus(self.fc_std(x))
-        std=std.squeeze(1)
+        #std = nn.functional.softplus(self.fc_std(x))
+        #std=std.squeeze(1)
+        std=torch.tensor([5,1],dtype=torch.float32).to(mu.device)
         return mu, std
 
 

@@ -4,6 +4,7 @@ base_path = str(Path(__file__).resolve().parent.parent)
 sys.path.append(base_path)
 from olympics_engine.generator import create_scenario
 from olympics_engine.AI_olympics import AI_Olympics
+from olympics_engine.scenario import *
 
 import torch
 import torch.nn as nn
@@ -14,7 +15,11 @@ def get_batch(batch_size):
     """
     games = []
     for _ in range(batch_size):
-        game = AI_Olympics(random_selection = True, minimap=False)
+        #game = AI_Olympics(random_selection = True, minimap=False)
+        #Gamemap = create_scenario('running')
+        #game=Running(map=Gamemap)
+        game_map=create_scenario('curling-IJACA-competition')
+        game=curling_competition(map=game_map)
         games.append(game)
     return games
 

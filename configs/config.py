@@ -15,21 +15,47 @@ class CnnConfig1:
     rnn_or_lstm: str = "lstm" # rnn or lstm or none
     rnn_hidden_size: int = 96 
     
+    min_std: float =torch.tensor([10,2],device="cuda") # 最小标准差
+    total_step: int = 1 # 总步数
+    
     #rl_config
     lmbda: float = 0.9
     k_epochs: int = 4
     gamma: float = 0.999
     eps_clip=0.15
     entropy_coef=0.02 # entropy coefficient
-    update_freq=100
-    buffer_size=100
-    sample_batch_size=100
     #train_config
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     batch_size: int = 8
-    actor_lr: float = 3e-4
-    critic_lr: float = 3e-4
+    actor_lr: float = 5e-3
+    critic_lr: float = 5e-3
     
+@dataclass
+class Fnnconfig:
+    input_dim:int = 40*40
+    input_channel: int = 1
+    model_info: list[tuple[int, int]] = field(default_factory=lambda: [256, 512, 256])
+    lstm_hidden_size: int = 128
+    model: str = "fnn"
+    is_train: bool = True
+    
+    rnn_or_lstm: str = None # rnn or lstm or none
+    rnn_hidden_size: int = 96 
+    
+    #rl_config
+    lmbda: float = 0.9
+    k_epochs: int = 12
+    gamma: float = 0.999
+    eps_clip=0.15
+    entropy_coef=0.02 # entropy coefficient
+    min_std: float =torch.tensor([20,4],device="cuda") # 最小标准差
+    total_step: int = 1 # 总步数
+
+    #train_config
+    device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    batch_size: int = 8
+    actor_lr: float = 1e-4
+    critic_lr: float = 1e-4
 
 @dataclass
 class CnnConfig2:
@@ -45,11 +71,12 @@ class CnnConfig2:
     rnn_hidden_size: int = 96 
     is_train: bool = True
     
+    min_std: float =torch.tensor([20,4],device="cuda") # 最小标准差
+    total_step: int = 1 # 总步数
     #rl_config
     lmbda: float = 0.9
-    k_epochs: int = 4
+    k_epochs: int = 8
     gamma: float = 0.999
-    max_sqe_len: int = 10
     eps_clip=0.12
     entropy_coef=0.015 # entropy coefficient
     
@@ -59,9 +86,7 @@ class CnnConfig2:
     batch_size: int = 8
     actor_lr: float = 4e-4
     critic_lr: float = 4e-4
-    update_freq=100
-    buffer_size=100
-    sample_batch_size:int=100
+
 @dataclass
 class train_config:
     #train_config
@@ -69,9 +94,9 @@ class train_config:
     eval_eps = 1 # 评估的回合数
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     max_steps: int = 400
-    num_episodes: int = 20
+    num_episodes: int = 25
     batch_size: int = 8
-    batch_per_epi:int=2 # 每个回合的批次数
+    batch_per_epi:int=4 # 每个回合的批次数
     
      # 新增全局训练参数
     train_both: bool = False

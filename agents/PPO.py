@@ -7,7 +7,7 @@ import random
 from collections import deque
 from models.get_model import get_model
 from models.classify import Classify
-
+import wandb
 class ReplayBufferQue:
     '''DQN的经验回放池，每次采样batch_size个样本'''
     def __init__(self, capacity: int) -> None:
@@ -59,9 +59,9 @@ class PPO_Agent:
         self.config=config
         self.model_pth=model_pth
         self.env_type=env_type
-        self.device = config.device
+        self.device = torch.device("cuda")
         self.train_config=train_config
-        self.memory = PGReplay(self.config.buffer_size)
+        self.memory = PGReplay()
         self._get_models()
         self.reset()
         self._get_train_params()     
@@ -104,7 +104,6 @@ class PPO_Agent:
             self.gamma = self.config.gamma
             self.eps_clip = self.config.eps_clip
             self.entropy_coef = self.config.entropy_coef
-            self.update_freq = self.config.update_freq
             self.episode_values=[]
             self.episode_rewards = []
             self.batch_size = self.train_config.batch_size if self.train_config.batch_size is not None else None
@@ -124,7 +123,8 @@ class PPO_Agent:
         """每回合开始时清空临时数据"""
         self.episode_values.clear()
         self.episode_rewards.clear()
-        
+    
+    @torch.no_grad()    
     def act(self,obs)->list: 
         # 获取智能体观察的形状（用于创建零张量）
         batch_size = len(obs)
@@ -161,9 +161,12 @@ class PPO_Agent:
                 mu,sigma,(self.actor_hidden)=self.actor(state,self.actor_hidden)
             else:
                 mu,sigma=self.actor(state)
-        
+        # 获取动作分布
+        action_dist = torch.distributions.Normal(mu, sigma)
+        # 采样动作
+        action = action_dist.sample()
         # 处理动作
-        action = mu.cpu().numpy()
+        action = action.cpu().numpy()
         action[:, 0] = np.clip(action[:, 0], -100, 200)  # motor
         action[:, 1] = np.clip(action[:, 1], -30, 30)    # angle
         
@@ -174,7 +177,7 @@ class PPO_Agent:
                 full_actions.append(action[i].tolist())
             else:
                 full_actions.append([0, 0])
-        
+        #print("Action Mean:", mu.mean().item(), "Std:", sigma.mean().item())
         return full_actions
 
     @torch.no_grad()
@@ -264,16 +267,14 @@ class PPO_Agent:
         seq_len, batch_size = rewards.shape
         advantages = torch.zeros_like(rewards)
         last_advantage = 0
-        last_value = last_value.detach() 
-
-        # Process each time step in reverse order
+        next_value = last_value.detach()  # 初始化为最终状态的估计值
         for t in reversed(range(seq_len)):
-            mask = 1.0 - dones[t].float()    # 保持正确的维度 [batch_size]
-            delta = rewards[t] + self.gamma * last_value * mask - values[t]  # δ_t = r_t + γ * V(s_{t+1}) - V(s_t)
-            advantages[t] = delta + self.gamma * self.lmbda * mask * last_advantage  # A_t = δ_t + γλ * A_{t+1}
-            # 保存当前优势和值用于下一次循环
+            mask = 1.0 - dones[t].float()
+            if t < seq_len - 1:
+                next_value = values[t+1].detach()  # 使用下一状态的价值
+            delta = rewards[t] + self.gamma * next_value * mask - values[t]
+            advantages[t] = delta + self.gamma * self.lmbda * mask * last_advantage
             last_advantage = advantages[t]
-            last_value = values[t]
 
         # 正确对优势函数进行归一化（基于批次）
         try:
@@ -290,7 +291,7 @@ class PPO_Agent:
         else:
             # 获取样本数据
             if self.config.rnn_or_lstm == 'lstm':
-                old_states, old_actions, old_log_probs, old_rewards, old_dones, old_actor_hidden, old_actor_cell, old_critic_hidden, old_critic_cell = self.memory.sample(batch_size=self.config.sample_batch_size)
+                old_states, old_actions, old_log_probs, old_rewards, old_dones, old_actor_hidden, old_actor_cell, old_critic_hidden, old_critic_cell = self.memory.sample()
             elif self.config.rnn_or_lstm == 'rnn':
                 old_states, old_actions, old_log_probs, old_rewards, old_dones, old_actor_hidden, old_critic_hidden = self.memory.sample(batch_size=self.config.sample_batch_size)
             else:
@@ -301,6 +302,10 @@ class PPO_Agent:
             old_rewards = torch.tensor(np.array(old_rewards), device=self.device, dtype=torch.float)
             old_dones = torch.tensor(np.array(old_dones), device=self.device, dtype=torch.float)
             old_states = old_states
+            #归一化奖励
+            rewards_mean = torch.mean(old_rewards)
+            rewards_std = torch.std(old_rewards)
+            old_rewards = (old_rewards - rewards_mean) / (rewards_std + 1e-8)
 
             # 计算价值
             values = []
@@ -362,13 +367,15 @@ class PPO_Agent:
                 surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * batch_advantages
 
                 # 应用掩码，已完成智能体的损失为0
-                actor_loss = (-torch.min(surr1, surr2) * valid_mask).mean()
+                actor_loss = -(torch.min(surr1, surr2) * valid_mask).mean()
 
                 # 添加熵正则化项（同样只考虑未完成的智能体）
                 entropy = dist.entropy().sum(dim=1)  # 对每个智能体的动作维度求和
                 entropy_term = (entropy * valid_mask).mean()
                 actor_loss = actor_loss - self.entropy_coef * entropy_term
-
+                
+                print(f"动作均值: {mu.mean().item():.2f}, 标准差: {sigma.mean().item():.2f}, 熵: {entropy.mean().item():.2f}")
+                
                 # 计算价值损失
                 if self.config.rnn_or_lstm=='lstm':
                     batch_critic_hidden = torch.cat(old_critic_hidden, dim=1)  # 沿着batch维度拼接
@@ -396,6 +403,13 @@ class PPO_Agent:
                 # 更新参数
                 self.actor_optimizer.step()
                 self.critic_optimizer.step()
+                
+                wandb.log({
+                        "actor_loss": actor_loss.item(),
+                        "critic_loss": critic_loss.item(),
+                        "entropy": entropy_term.item(),
+                    })
+                self.entropy_coef=self.entropy_coef * 0.9995
         
         # 清空内存和返回结果
         self.memory.clear()

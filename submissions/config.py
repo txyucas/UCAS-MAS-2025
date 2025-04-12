@@ -7,28 +7,28 @@ class CnnConfig1:
     input_height: int = 40
     input_width: int = 40
     input_channel: int = 1
-    model_info: list[tuple[int, int]] = field(default_factory=lambda: [(8, 3), (32, 3), (48, 5)])
-    lstm_hidden_size: int = 48
+    model_info: list[tuple[int, int]] = field(default_factory=lambda: [(32, 3), (48, 3), (64, 5)])
+    lstm_hidden_size: int = 128
     model: str = "cnn"
     is_train: bool = False
     
     rnn_or_lstm: str = "lstm" # rnn or lstm or none
-    rnn_hidden_size: int = 48 
+    rnn_hidden_size: int = 96 
     
     #rl_config
     lmbda: float = 0.9
-    k_epochs: int = 4
-    gamma: float = 0.99
-    eps_clip=0.05
+    k_epochs: int = 12
+    gamma: float = 0.999
+    eps_clip=0.15
     entropy_coef=0.02 # entropy coefficient
-    update_freq=32
-    buffer_size=32
-    sample_batch_size=8
+    update_freq=2399
+    buffer_size=2399
+    sample_batch_size=2399
     #train_config
-    device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    device: torch.device = torch.device("cpu")
     batch_size: int = 1
-    actor_lr: float = 8e-5
-    critic_lr: float = 8e-5
+    actor_lr: float = 2e-4
+    critic_lr: float = 2e-4
     
 
 @dataclass
@@ -37,40 +37,40 @@ class CnnConfig2:
     input_height: int = 40
     input_width: int = 40
     input_channel: int = 1
-    model_info: list[tuple[int, int]] = field(default_factory=lambda: [(8, 3), (32, 3), (48, 5)])
-    lstm_hidden_size: int = 48
+    model_info: list[tuple[int, int]] = field(default_factory=lambda:  [(16, 3), (48, 3), (48, 5)])
+    lstm_hidden_size: int = 96
     model:str = "cnn" # cnn or lstm or none
     
     rnn_or_lstm: str = "lstm" # rnn or lstm or none
-    rnn_hidden_size: int = 48 
-    is_train: bool = False
+    rnn_hidden_size: int = 96 
+    is_train: bool = True
     
     #rl_config
     lmbda: float = 0.9
     k_epochs: int = 8
-    gamma: float = 0.99
-    max_sqe_len: int = 10
+    gamma: float = 0.999
     eps_clip=0.12
     entropy_coef=0.015 # entropy coefficient
-    update_freq=32
+    
     
     #train_config
-    device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    batch_size: int = 1
-    actor_lr: float = 4e-4
-    critic_lr: float = 4e-4
-    buffer_size=32
-    sample_batch_size:int=8
+    device: torch.device = torch.device("cpu")
+    batch_size: int = 2
+    actor_lr: float = 2e-4
+    critic_lr: float = 2e-4
+    update_freq=2399
+    buffer_size=2399
+    sample_batch_size:int=2399
 @dataclass
 class train_config:
     #train_config
     selfplay: bool = True
     eval_eps = 1 # 评估的回合数
-    device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    device: torch.device = torch.device("cuda") 
     max_steps: int = 400
-    num_episodes: int = 8
+    num_episodes: int = 40
     batch_size: int = 1
-    batch_per_epi:int=3 # 每个回合的批次数
+    batch_per_epi:int=2 # 每个回合的批次数
     
      # 新增全局训练参数
     train_both: bool = False

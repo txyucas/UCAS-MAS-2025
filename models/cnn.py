@@ -7,14 +7,14 @@ class CnnBlock(nn.Module):
     def __init__(self, input_channels, output_channels, kernel_size, stride=1, padding=0, drop_out=0.2):
         super(CnnBlock, self).__init__()
         self.conv = nn.Conv2d(input_channels, output_channels, kernel_size, stride, padding)
-        #self.bn = nn.BatchNorm2d(output_channels)
+        self.bn = nn.BatchNorm2d(output_channels)
         self.relu = nn.ReLU()
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         self.drop_out = nn.Dropout(drop_out)
 
     def forward(self, x):
         x = self.conv(x)
-        #x = self.bn(x) if x.shape[0] > 1 else x
+        x = self.bn(x) if x.shape[0] > 1 else x
         x = self.relu(x)
         x = self.pool(x) if x.shape[2] > 1 and x.shape[3] > 1 else x
         x = self.drop_out(x)
@@ -69,7 +69,7 @@ class Actor(nn.Module):
     def forward(self, x, h_state=None, c_state=None,istest=True):
         # 确保输入维度为 (batch_size,  channels, height, width)
         assert x.dim() == 4, "Input tensor must have 4 dimensions (batch, channel, height, width)"
-        
+        x=x/10
         x = self.cnn_layers(x).view(x.size(0), -1)  # 展平特征图
         x = x.unsqueeze(1)
 
@@ -89,18 +89,17 @@ class Actor(nn.Module):
     def _get_forward(self, x):
         x= self.liner1(x)
         x= self.relu(x)
-        x= self.liner2(x)+x
+        x= self.liner2(x)
         x= self.relu(x)
         mu_raw= self.output_activation(self.fc_mu(x))
         
         #去掉第一个维度
         mu_raw = mu_raw.squeeze(1)
-        mu = torch.zeros_like(mu_raw)
-        mu[:, 0] = mu_raw[:, 0] * 150 + 50
-        mu[:, 1] = mu_raw[:, 1] * 30
-        #std = nn.functional.softplus(self.fc_std(x))
-        #std=std.squeeze(1)
-        std=torch.tensor([5,1],dtype=torch.float32).to(mu.device)
+        mu = mu_raw * torch.tensor([150, 30],device='cuda') + torch.tensor([50, 0],device='cuda') 
+        std = nn.functional.softplus(self.fc_std(x))+self.config.min_std
+        std=std*(0.99**self.config.total_step)
+        std=std.squeeze(1)
+        #std=torch.tensor([5,1],dtype=torch.float32).to(mu.device)
         return mu, std
 
 
@@ -147,6 +146,7 @@ class Critic(nn.Module):
 
 
     def forward(self, x, h_state=None, c_state=None):
+        x=x/10
         x = self.cnn_layers(x).view(x.size(0), -1)  # 展平特征图
         x = x.unsqueeze(1)
         if self.config.rnn_or_lstm == 'rnn':
