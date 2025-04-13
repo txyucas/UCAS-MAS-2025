@@ -474,20 +474,6 @@ class SelfPlay:
             # 执行训练
             trainer.training(actor1_path="ckpt_selfplay/actor1.pth", actor2_path=f"ckpt_selfplay/actor2.pth", critic1_path=f"ckpt_selfplay/critic1.pth", critic2_path=f"ckpt_selfplay/critic2.pth")
             
-<<<<<<< Updated upstream
-            mean_value_1 = np.mean(trainer.rewardlist_1[:,0])
-            value_std_1 = np.mean(trainer.rewardlist_1[:,1])
-            mean_reward_1 = np.mean(trainer.rewardlist_1[:,2])
-            mean_value_2 = np.mean(trainer.rewardlist_2[:,0])
-            value_std_2 = np.mean(trainer.rewardlist_2[:,1])
-            mean_reward_2 = np.mean(trainer.rewardlist_2[:,2])
-            
-            updatelist = np.array([mean_value_1, value_std_1, mean_reward_1, mean_value_2, value_std_2, mean_reward_2])
-            
-            # 更新对手池（此处假设每次迭代后都更新）
-            self.update_pool(self.base_agent_1)
-            self.update_piority(opponent_id, updatelist)
-=======
             if trainer.rewardlist_1 and trainer.rewardlist_2:
                 reward_array_1 = np.array(trainer.rewardlist_1)
                 reward_array_2 = np.array(trainer.rewardlist_2)
@@ -504,7 +490,6 @@ class SelfPlay:
                 # 更新对手池（此处假设每次迭代后都更新）
                 self.update_pool(self.base_agent_1)
                 self.update_piority(opponent_id, updatelist)
->>>>>>> Stashed changes
 
             
 if __name__ == "__main__":
