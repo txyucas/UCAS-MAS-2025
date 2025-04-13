@@ -54,11 +54,21 @@ if __name__ == "__main__":
     config.min_std = 0.1
     config.batch_size=1
     config.is_train = False
-    for i in range(1):
-        game, agent_num = initialize_game(args.map)
+    for i in range(10):
+        #game, agent_num = initialize_game(args.map)
+        vis =  200
+        vis_clear =  5
+        curling_gamemap = create_scenario('curling-IJACA-competition')
         
+        for agent in curling_gamemap['agents']:
+            agent.visibility = vis
+            agent.visibility_clear = vis_clear
+        curling_gamemap['env_cfg']['vis']=vis
+        curling_gamemap['env_cfg']['vis_clear'] = vis_clear
+        game = curling_competition(curling_gamemap)
+        agent_num = 2
         ### 修改这里
-        agent= PPO_Agent(config,config,model_pth='/home/tian/UCAS-MAS-2025/running/number_0/agent1/ppo_0.pth')
+        agent= PPO_Agent(config,config,model_pth='/home/tian/UCAS-MAS-2025/running/number_0/ppo_21.pth')
         rand_agent = random_agent()
 
         obs = game.reset()
@@ -76,19 +86,22 @@ if __name__ == "__main__":
                 #action1, action2 = agent.act(obs[0]), rand_agent.act(obs[1])
                 action1=agent.act([obs[0]])[0]
                 
-                print("action1",action1)
+                #print("action1",action1)
                 action2=rand_agent.act(obs[1])
                 action = [action1, action2]
             elif agent_num == 1:
                 action1 = agent.act(obs)
                 action = [action1]
-            old_name=game.current_game.game_name
             obs, reward, done, _ = game.step(action)
-            name=game.current_game.game_name
-            if name!=old_name:
-                agent.reset()
-                print("reset agent")
-            #print(f'reward = {reward}')
+            if reward !=[0,0]:
+                print("reward",reward)
+            #old_name=game.current_game.game_name
+            #obs, reward, done, _ = game.step(action)
+            #name=game.current_game.game_name
+            #if name!=old_name:
+            #    agent.reset()
+            #    print("reset agent")
+            ##print(f'reward = {reward}')
             if RENDER:
                 game.render()
 

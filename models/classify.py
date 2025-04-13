@@ -9,17 +9,56 @@ from olympics_engine.scenario import *
 import torch
 import torch.nn as nn
 
-def get_batch(batch_size):
+def get_batch(batch_size,section):
     """
     Generates a batch of games.
     """
     games = []
     for _ in range(batch_size):
-        #game = AI_Olympics(random_selection = True, minimap=False)
-        #Gamemap = create_scenario('running')
-        #game=Running(map=Gamemap)
-        game_map=create_scenario('curling-IJACA-competition')
-        game=curling_competition(map=game_map)
+        max_step = 400
+        vis = 200
+        vis_clear = 5
+        if section == 1:
+            running_Gamemap = create_scenario("running-competition")
+            game = Running_competition(running_Gamemap, vis=vis, vis_clear=vis_clear, agent1_color='light red', agent2_color='blue')
+
+        elif section == 2:
+            tablehockey_gamemap = create_scenario("table-hockey")
+            for agent in tablehockey_gamemap['agents']:
+                agent.visibility = vis
+                agent.visibility_clear = vis_clear
+            game = table_hockey(tablehockey_gamemap)
+
+        elif section == 3:
+            football_gamemap = create_scenario('football')
+            for agent in football_gamemap['agents']:
+                agent.visibility = vis
+                agent.visibility_clear = vis_clear
+            game = football(football_gamemap)
+
+        elif section == 4:
+            wrestling_gamemap = create_scenario('wrestling')
+            for agent in wrestling_gamemap['agents']:
+                agent.visibility = vis
+                agent.visibility_clear = vis_clear
+            game = wrestling(wrestling_gamemap)
+
+        elif section == 5:
+            curling_gamemap = create_scenario('curling-IJACA-competition')
+            for agent in curling_gamemap['agents']:
+                agent.visibility = vis
+                agent.visibility_clear = vis_clear
+                curling_gamemap['env_cfg']['vis'] = vis
+                curling_gamemap['env_cfg']['vis_clear'] = vis_clear
+            game = curling_competition(curling_gamemap)
+
+        elif section == 6:
+            billiard_gamemap = create_scenario("billiard-competition")
+            for agent in billiard_gamemap['agents']:
+                agent.visibility = vis
+                agent.visibility_clear = vis_clear
+            game = billiard_competition(billiard_gamemap)
+
         games.append(game)
     return games
 

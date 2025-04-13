@@ -22,13 +22,13 @@ class CnnConfig1:
     lmbda: float = 0.9
     k_epochs: int = 4
     gamma: float = 0.999
-    eps_clip=0.15
+    eps_clip=0.25
     entropy_coef=0.02 # entropy coefficient
     #train_config
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     batch_size: int = 8
-    actor_lr: float = 5e-3
-    critic_lr: float = 5e-3
+    actor_lr: float = 2e-3
+    critic_lr: float = 2e-3
     
 @dataclass
 class Fnnconfig:

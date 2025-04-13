@@ -50,22 +50,23 @@ class random_agent:
 wandb.init(project="MAS-final-last6", config=train_config().__dict__, name='running')  # 在脚本开始时进行初始化，而不是函数内部
 
 class Trainer:
-    def __init__(self,agent1=PPO_Agent(config=CnnConfig1(),train_config=train_config()),agent2=PPO_Agent(config=CnnConfig2(),train_config=train_config()),config=train_config(),dir='self_play_dir'):
+    def __init__(self,agent1=PPO_Agent(config=CnnConfig1(),train_config=train_config()),agent2=PPO_Agent(config=CnnConfig2(),train_config=train_config(),),config=train_config(),dir='self_play_dir',section=1):
         self.agent1=agent1
         self.agent2=agent2
         self.config = config
+        self.section=section
         self.random_agent=random_agent(config=CnnConfig1)
         if not os.path.exists(dir):
             os.makedirs(dir)
         self.dir=dir
         self.rewardlist_1 = []
         self.rewardlist_2 = []
-        self.step_penalty = 5e-2
+        self.step_penalty = 0
 
     def _train_one_step(self):
         self.agent1.config.total_step += 1
         self.agent2.config.total_step += 1
-        self.envs = get_batch(self.config.batch_size)
+        self.envs = get_batch(self.config.batch_size,section=self.section)
         self.agent1.reset()
         self.agent2.reset()
         self.agent1.sample_count = 0
@@ -89,11 +90,13 @@ class Trainer:
             actions_agent2,log_probs_agent2,states_agent2= self.agent2.sample_action(old_states_agent2)
             actions = [list(action_pair) for action_pair in zip(actions_agent1, actions_agent2)]
             next_states,rewards,dones=[],[],[]
-            step_punishment = self.step_penalty * total_steps / (self.config.max_steps*6)**2
+            step_punishment = self.step_penalty * total_steps / (self.config.max_steps)**2
             for env, action,i in zip(self.envs, actions,range(len(actions))):
                 if env.done ==False:
                     #old_name=env.current_game.game_name if hasattr(env, 'current_game') and hasattr(env.current_game, 'game_name') else None
                     next_state, reward, done, _ = env.step(action)
+                    reward[0], reward[1] = reward[0]-step_punishment, reward[1]-step_punishment
+                    env.done=done
                     #new_name=env.current_game.game_name if hasattr(env, 'current_game') and hasattr(env.current_game, 'game_name') else None
                     #if old_name != new_name:
                     #    self.agent1.actor_cell[i]=torch.zeros_like(self.agent1.actor_cell[i])
@@ -131,8 +134,9 @@ class Trainer:
             states = next_states
             if all(dones):
                 self.rewardlist_1.append(self.agent1.update())
+                self.rewardlist_2.append(self.agent2.update(frozen=not self.config.train_both))
                 break
-            elif total_steps ==self.config.max_steps-1:
+            elif total_steps ==self.config.max_steps:
                 self.rewardlist_1.append(self.agent1.update())
                 self.rewardlist_2.append(self.agent2.update(frozen=not self.config.train_both)) 
             ep_reward_agent1 += rewards_agent1.mean()
@@ -155,7 +159,7 @@ class Trainer:
             self.agent2.sample_count = 0
             total_eval_reward_agent1 = 0
             total_eval_reward_agent2 = 0
-    
+            self.step_penalty = 0
             for _ in range(self.config.eval_eps):
                 eval_reward_agent1 = 0
                 self.agent1.config.total_step += 1
@@ -163,14 +167,15 @@ class Trainer:
                 self.agent1.reset()
                 self.agent2.reset()
                 eval_reward_agent2 = 0
-                self.envs=get_batch(self.config.batch_size)  # 随机选择游戏地图和智能体数量
+                self.envs=get_batch(self.config.batch_size,section=self.section)  # 随机选择游戏地图和智能体数量
                 states = [env.reset() for env in self.envs]  # 重置环境
                 
                 for env in self.envs:
                     env.max_step = self.config.max_steps
+                donse=[]
                 #self.env.render()
                 #for _ in range( self.config.max_steps*6):
-                for _ in range( self.config.max_steps):    
+                for i in range( self.config.max_steps):    
                     # 两个智能体分别选择动作
                     old_states_agent1=[state[0] for state in states]
                     old_states_agent2=[state[1] for state in states]
@@ -182,19 +187,23 @@ class Trainer:
                     actions = [[action_agent1, action_agent2] for (action_agent1, action_agent2) in zip(actions_agent1, actions_agent2)]
                     # 执行动作
                     next_states, rewards, dones = [], [], []
-                    for env, action,i in zip(self.envs, actions,range(self.config.batch_size)):
+                    step_punishment = self.step_penalty * i / (self.config.max_steps)**2
+                    for env, action,t in zip(self.envs, actions,range(self.config.batch_size)):
                         if env.done ==False:
                             #old_name=env.current_game.game_name if hasattr(env, 'current_game') and hasattr(env.current_game, 'game_name') else None
                             next_state, reward, done, _ = env.step(action)
+                            if reward !=[0,0]:
+                                #print('reward',reward)
+                                pass
+                            reward[0], reward[1] = reward[0]-step_punishment, reward[1]-step_punishment
+                            env.done=done 
                             #new_name=env.current_game.game_name if hasattr(env, 'current_game') and hasattr(env.current_game, 'game_name') else None
                             #if old_name != new_name:
                             #    self.agent1.actor_cell[i]=torch.zeros_like(self.agent1.actor_cell[i])
                             #    self.agent1.critic_cell[i]=torch.zeros_like(self.agent1.critic_cell[i])
                             #    self.agent1.actor_hidden[i]=torch.zeros_like(self.agent1.actor_hidden[i])
                             #    self.agent1.critic_hidden[i]=torch.zeros_like(self.agent1.critic_hidden[i])
-                            if reward !=[0,0]:
-                                #print('reward',reward)
-                                pass                  
+                 
                         else:
                             next_state=[{'agent_obs':None},{'agent_obs':None}]
                             reward=[0.0,0.0]
@@ -202,7 +211,7 @@ class Trainer:
                         next_states.append(next_state)
                         rewards.append(reward)
                         dones.append(done if done is not None else False)
-    
+                    donse.append(dones)
                     # 更新状态
                     states = next_states
                     # 计算奖励
@@ -270,7 +279,7 @@ class Trainer:
             total_random_against_agent1 = 0
             total_random_against_agent2 = 0
             for _ in range(self.config.eval_eps):
-                self.envs=get_batch(self.config.batch_size)  # 随机选择游戏地图和智能体数量
+                self.envs=get_batch(self.config.batch_size,section=self.section)  # 随机选择游戏地图和智能体数量
                 # 智能体1与随机智能体对抗
                 agent1.reset()
                 agent2.reset()
@@ -326,6 +335,7 @@ class Trainer:
                         for env, action in zip(self.envs, actions):
                             if env.done ==False:
                                 next_state, reward, done, _ = env.step(action)
+                                env.done=done
                             else:
                                 next_state=[{'agent_obs':None},{'agent_obs':None}]
                                 reward=[0,0]
@@ -376,7 +386,7 @@ class Trainer:
                     })
                 print(f"随机对抗评估结果 - 智能体1平均奖励: {mean_random_eval_reward_agent1:.2f},")                
             return mean_random_eval_reward_agent1
-    def training(self,save_dir='self_play_dir',):
+    def training(self,save_dir='self_play_dir',step=0):
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         self.dir=save_dir
@@ -395,8 +405,14 @@ class Trainer:
                 best_reward*=0.95
                 print('模型未更新')
                 self.agent1=agent1_copy
-            self._save_model(dir=self.dir,step=epi)
+            #self._save_model(dir=self.dir,step=epi)
             self._renew_args()
+            step+=1
+            wandb.log({
+                "step": step,
+                "best_reward": best_reward
+            })
+        return step
     def _save_model(self,dir,step):
         if self.config.train_both:
             self.agent1.save_model(dir,step,number=1)
@@ -411,7 +427,8 @@ class SelfPlay:
         base_agent_2,     # 可选的第二个初始智能体对象
         config=train_config(),  # 训练迭代次数
         # save_dir="selfplay_models",  # 模型存储目录
-        device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu") # 设备（CPU/GPU）
+        device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"), # 设备（CPU/GPU）
+        env_type='running'  # 游戏类型
     ):
         """
         自博弈训练管理器
@@ -420,8 +437,11 @@ class SelfPlay:
         2. 每次训练时从池中随机选择对手
         3. 定期将当前智能体的克隆加入池中
         """
+        self.env_type=env_type
+        self.section=game_to_section[env_type]
         self.base_agent_1 = base_agent_1
         self.base_agent_2 = base_agent_2
+        self.config=config
         self.base_agent_3 = random_agent(config=CnnConfig1)
         self.pool_size = config.pool_size
         # self.save_dir = save_dir
@@ -501,17 +521,19 @@ class SelfPlay:
         3. 训练当前智能体
         4. 更新对手池
         """
-        config=train_config()
+        config=self.config
+        step=0
         for i in range (self.num_training):
             # 选择对手
-            dir=f'running/number_{i}'
+            dir=f'{self.env_type}/number_{i}'
+            
             opponent, opponent_id = self.get_opponent()
             print(f"选择对手: {opponent_id}")
             # 初始化训练器（假设训练器接收当前智能体和环境）
-            trainer = Trainer(agent1=self.base_agent_1, agent2=opponent,config=config,dir=dir)
+            trainer = Trainer(agent1=self.base_agent_1, agent2=opponent,config=config,dir=dir,section=self.section)
             config=trainer.config
             # 执行训练
-            trainer.training(save_dir=dir)
+            step=trainer.training(save_dir=dir,step=step)
             
             mean_value_1 = np.mean(trainer.rewardlist_1[:][0])
             value_std_1 = np.mean(trainer.rewardlist_1[:][1])
@@ -541,16 +563,32 @@ def all_seed(seed = 1):
     # config for cudnn
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.enabled = False           
+    torch.backends.cudnn.enabled = False 
+
+Section_to_game={
+        1:'running',
+        2:'table-hockey',
+        3:'football',
+        4:'wrestling',
+        5:'curling-IJACA-competition',
+        6:'billiard-competition'
+}
+game_to_section={
+        'running':1,
+        'table-hockey':2,
+        'football':3,
+        'wrestling':4,
+        'curling-IJACA-competition':5,
+        'billiard-competition':6
+}         
 if __name__ == "__main__":
     all_seed(1)
+    section=1
+    game=Section_to_game[section]
     # Initialize the game and agents
-    agent1 = PPO_Agent(config=CnnConfig1(),train_config=train_config(),)
-    agent2 = PPO_Agent(config=CnnConfig2(),train_config=train_config(),)
+    agent1 = PPO_Agent(config=CnnConfig1(),train_config=train_config(),env_type=game)
+    agent2 = PPO_Agent(config=CnnConfig2(),train_config=train_config(),env_type=game)
     config=train_config()
-    #trainer = Trainer(agent1=agent1, agent2=agent2, config=config)
-    #trainer.training()
-    
-    
-    selfplay = SelfPlay(base_agent_1=agent1, base_agent_2=agent2,config=config)
+
+    selfplay = SelfPlay(base_agent_1=agent1, base_agent_2=agent2,config=config,env_type=game)
     selfplay.training()
