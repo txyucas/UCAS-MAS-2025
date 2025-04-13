@@ -140,8 +140,13 @@ class Trainer:
             self.agent1.memory.push((state[0], action_agent1, self.agent1.log_probs, reward_agent1, done))
             self.agent2.memory.push((state[1], action_agent2, self.agent2.log_probs, reward_agent2, done))
             state = next_state
-            self.rewardlist_1.append(self.agent1.update())
-            self.rewardlist_2.append(self.agent2.update())
+            update_result_1 = self.agent1.update()
+            update_result_2 = self.agent2.update(istest=True)
+            if update_result_1 is None or update_result_2 is None:
+                pass
+            else:
+                self.rewardlist_1.append(update_result_1)
+                self.rewardlist_2.append(update_result_2)
             ep_reward_agent1 += reward_agent1
             ep_reward_agent2 += reward_agent2
             
@@ -304,6 +309,7 @@ class Trainer:
                         break
 
                 total_random_eval_reward_agent1 += eval_reward_agent1
+                total_random_eval_reward_random1 += eval_reward_random1
 
                 # 智能体2与随机智能体对抗
                 eval_reward_agent2 = 0
@@ -324,10 +330,13 @@ class Trainer:
                         break
 
                 total_random_eval_reward_agent2 += eval_reward_agent2
+                total_random_eval_reward_random2 += eval_reward_random2
 
             # 计算平均奖励
             mean_random_eval_reward_agent1 = total_random_eval_reward_agent1 / self.config.eval_eps
             mean_random_eval_reward_agent2 = total_random_eval_reward_agent2 / self.config.eval_eps
+            mean_random_eval_reward_random1 = total_random_eval_reward_random1 / self.config.eval_eps
+            mean_random_eval_reward_random2 = total_random_eval_reward_random2 / self.config.eval_eps
             
             self.agent1.memory.clear()  # 清空缓冲区
             self.agent2.memory.clear()
@@ -335,11 +344,16 @@ class Trainer:
             # 记录到 wandb
             wandb.log({
                 "random_eval_mean_reward_agent1": mean_random_eval_reward_agent1,
-                "random_eval_mean_reward_agent2": mean_random_eval_reward_agent2
+                "random_eval_mean_reward_agent2": mean_random_eval_reward_agent2,
+                "random_eval_mean_reward_random1": mean_random_eval_reward_random1,
+                "random_eval_mean_reward_random2": mean_random_eval_reward_random2
             })
 
             print(f"随机对抗评估结果 - 智能体1平均奖励: {mean_random_eval_reward_agent1:.2f}, "
-                  f"智能体2平均奖励: {mean_random_eval_reward_agent2:.2f}")
+                  f"智能体2平均奖励: {mean_random_eval_reward_agent2:.2f},"
+                  f"随机智能体1平均奖励: {mean_random_eval_reward_random1:.2f}, "
+                  f"随机智能体2平均奖励: {mean_random_eval_reward_random2:.2f}")
+            
     def training(self,actor1_path=None, actor2_path=None, critic1_path=None, critic2_path=None):
         for i in range(self.config.num_episodes):
             for i in range(self.config.batch_per_epi):
@@ -414,12 +428,12 @@ class SelfPlay:
             epsilon: 使用最新智能体的概率（否则随机选历史对手）
         """
         if random.random() < epsilon or len(self.opponent_pool) == 1:
-            maxindex = self.piority_list.index(max(self.piority_list))
-            return self.opponent_pool[maxindex], maxindex
+            index = self.piority_list.index(max(self.piority_list))
+            opponent = self.opponent_pool[index]
         else:
-            random_index = random.randint(0, len(self.opponent_pool)-1)  # 生成随机索引
-            opponent = self.opponent_pool[random_index]          # 通过索引获取元素
-            return opponent, random_index  # 从历史中随机选择
+            index = random.randint(0, len(self.opponent_pool)-1)  # 生成随机索引
+            opponent = self.opponent_pool[index]          # 通过索引获取元素
+            return opponent, index  # 从历史中随机选择
 
     def compute_piority(self, mean_value, value_std, mean_reward):
         """
@@ -458,8 +472,9 @@ class SelfPlay:
             trainer = Trainer(agent1=self.base_agent_1, agent2=opponent, config=train_config())
             
             # 执行训练
-            trainer.training(actor1_path="ckpt_selfplay/actor1.pth", actor2_path=f"ckp_selfplayt/actor2.pth", critic1_path=f"ckpt_selfplay/critic1.pth", critic2_path=f"ckpt_selfplay/critic2.pth")
+            trainer.training(actor1_path="ckpt_selfplay/actor1.pth", actor2_path=f"ckpt_selfplay/actor2.pth", critic1_path=f"ckpt_selfplay/critic1.pth", critic2_path=f"ckpt_selfplay/critic2.pth")
             
+<<<<<<< Updated upstream
             mean_value_1 = np.mean(trainer.rewardlist_1[:,0])
             value_std_1 = np.mean(trainer.rewardlist_1[:,1])
             mean_reward_1 = np.mean(trainer.rewardlist_1[:,2])
@@ -472,6 +487,24 @@ class SelfPlay:
             # 更新对手池（此处假设每次迭代后都更新）
             self.update_pool(self.base_agent_1)
             self.update_piority(opponent_id, updatelist)
+=======
+            if trainer.rewardlist_1 and trainer.rewardlist_2:
+                reward_array_1 = np.array(trainer.rewardlist_1)
+                reward_array_2 = np.array(trainer.rewardlist_2)
+                
+                mean_value_1 = np.mean(reward_array_1[:,0])
+                value_std_1 = np.mean(reward_array_1[:,1])
+                mean_reward_1 = np.mean(reward_array_1[:,2])
+                mean_value_2 = np.mean(reward_array_2[:,0])
+                value_std_2 = np.mean(reward_array_2[:,1])
+                mean_reward_2 = np.mean(reward_array_2[:,2])
+                
+                updatelist = np.array([mean_value_1, value_std_1, mean_reward_1, mean_value_2, value_std_2, mean_reward_2])
+                
+                # 更新对手池（此处假设每次迭代后都更新）
+                self.update_pool(self.base_agent_1)
+                self.update_piority(opponent_id, updatelist)
+>>>>>>> Stashed changes
 
             
 if __name__ == "__main__":
