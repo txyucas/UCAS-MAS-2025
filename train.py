@@ -285,6 +285,8 @@ class Trainer:
             agent2.sample_count = 0
             total_random_eval_reward_agent1 = 0
             total_random_eval_reward_agent2 = 0
+            total_random_eval_reward_random1 = 0
+            total_random_eval_reward_random2 = 0
 
             for _ in range(self.config.eval_eps):
                 self.env,num_agent=get_random_game(game_map_dict)  # 随机选择游戏地图和智能体数量
