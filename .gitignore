@@ -1,12 +1,11 @@
 checkpoints/
 data/
 .vscode/
-__pycache__/
+
 logs/
 .dist/
 
 # Byte-compiled / optimized / DLL files
-__pycache__/
 *.py[cod]
 *$py.class
 
@@ -175,7 +174,6 @@ olympics_engine/
 ckpt/
 .pth
 models/__pycache__/
-olympics_engine/
 self_play_dir/
 wandb/
 __pycache__/
@@ -187,8 +185,3 @@ table-hockey/
 running4/
 wrestling/
 classify-ckpt/
-wrestling/number_0/agent1/
-table-hockey/
-table-hockey/
-running4/
-running/
