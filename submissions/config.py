@@ -10,6 +10,8 @@ class CnnConfig1:
     model_info: list[tuple[int, int]] = field(default_factory=lambda: [(32, 3), (48, 3), (64, 5)])
     lstm_hidden_size: int = 128
     model: str = "cnn"
+    min_std=0
+    total_step=1
     is_train: bool = False
     
     rnn_or_lstm: str = "lstm" # rnn or lstm or none
@@ -68,8 +70,8 @@ class train_config:
     eval_eps = 1 # 评估的回合数
     device: torch.device = torch.device("cuda") 
     max_steps: int = 400
-    num_episodes: int = 40
-    batch_size: int = 1
+    num_episodes: int = 25
+    batch_size: int = 8
     batch_per_epi:int=2 # 每个回合的批次数
     
      # 新增全局训练参数

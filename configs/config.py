@@ -7,7 +7,7 @@ class CnnConfig1:
     input_height: int = 40
     input_width: int = 40
     input_channel: int = 1
-    model_info: list[tuple[int, int]] = field(default_factory=lambda: [(32, 3), (48, 3), (64, 5)])
+    model_info: list[tuple[int, int]] = field(default_factory=lambda:[(32, 3), (48, 3), (64, 5)])
     lstm_hidden_size: int = 128
     model: str = "cnn"
     is_train: bool = True
@@ -15,20 +15,21 @@ class CnnConfig1:
     rnn_or_lstm: str = "lstm" # rnn or lstm or none
     rnn_hidden_size: int = 96 
     
-    min_std: float =torch.tensor([10,2],device="cuda") # 最小标准差
+    min_std: float =torch.tensor([20,4],device="cuda") # 最小标准差
     total_step: int = 1 # 总步数
     
     #rl_config
     lmbda: float = 0.9
     k_epochs: int = 4
     gamma: float = 0.999
-    eps_clip=0.25
-    entropy_coef=0.02 # entropy coefficient
+    eps_clip=0.3
+    entropy_coef=0.03 # entropy coefficient
     #train_config
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     batch_size: int = 8
-    actor_lr: float = 2e-3
-    critic_lr: float = 2e-3
+    actor_lr: float = 1e-3
+    critic_lr: float = 1e-3
+    entropy_decay: float = 0.9997
     
 @dataclass
 class Fnnconfig:
@@ -48,7 +49,7 @@ class Fnnconfig:
     gamma: float = 0.999
     eps_clip=0.15
     entropy_coef=0.02 # entropy coefficient
-    min_std: float =torch.tensor([20,4],device="cuda") # 最小标准差
+    min_std: float =torch.tensor([40,10],device="cuda") # 最小标准差
     total_step: int = 1 # 总步数
 
     #train_config
@@ -71,7 +72,7 @@ class CnnConfig2:
     rnn_hidden_size: int = 96 
     is_train: bool = True
     
-    min_std: float =torch.tensor([20,4],device="cuda") # 最小标准差
+    min_std: float =torch.tensor([40,10],device="cuda") # 最小标准差
     total_step: int = 1 # 总步数
     #rl_config
     lmbda: float = 0.9
@@ -93,8 +94,8 @@ class train_config:
     selfplay: bool = True
     eval_eps = 1 # 评估的回合数
     device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    max_steps: int = 400
-    num_episodes: int = 25
+    max_steps: int = 500
+    num_episodes: int = 20
     batch_size: int = 8
     batch_per_epi:int=4 # 每个回合的批次数
     

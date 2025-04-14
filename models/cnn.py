@@ -96,8 +96,7 @@ class Actor(nn.Module):
         #去掉第一个维度
         mu_raw = mu_raw.squeeze(1)
         mu = mu_raw * torch.tensor([150, 30],device='cuda') + torch.tensor([50, 0],device='cuda') 
-        std = nn.functional.softplus(self.fc_std(x))+self.config.min_std
-        std=std*(0.99**self.config.total_step)
+        std = nn.functional.softplus(self.fc_std(x))+self.config.min_std*(0.99**self.config.total_step)
         std=std.squeeze(1)
         #std=torch.tensor([5,1],dtype=torch.float32).to(mu.device)
         return mu, std

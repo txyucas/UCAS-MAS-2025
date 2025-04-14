@@ -409,7 +409,7 @@ class PPO_Agent:
                         "critic_loss": critic_loss.item(),
                         "entropy": entropy_term.item(),
                     })
-                self.entropy_coef=self.entropy_coef * 0.9995
+                #self.entropy_coef=self.entropy_coef * self.config.entropy_decay
         
         # 清空内存和返回结果
         self.memory.clear()

@@ -47,7 +47,7 @@ class random_agent:
     
     
 
-wandb.init(project="MAS-final-last6", config=train_config().__dict__, name='running')  # 在脚本开始时进行初始化，而不是函数内部
+
 
 class Trainer:
     def __init__(self,agent1=PPO_Agent(config=CnnConfig1(),train_config=train_config()),agent2=PPO_Agent(config=CnnConfig2(),train_config=train_config(),),config=train_config(),dir='self_play_dir',section=1):
@@ -97,13 +97,17 @@ class Trainer:
                     next_state, reward, done, _ = env.step(action)
                     reward[0], reward[1] = reward[0]-step_punishment, reward[1]-step_punishment
                     env.done=done
+                    #if done:
+                    #    reward[0]*=(self.config.max_steps-total_steps+1)*2/self.config.max_steps
+                        
                     #new_name=env.current_game.game_name if hasattr(env, 'current_game') and hasattr(env.current_game, 'game_name') else None
                     #if old_name != new_name:
                     #    self.agent1.actor_cell[i]=torch.zeros_like(self.agent1.actor_cell[i])
                     #    self.agent1.critic_cell[i]=torch.zeros_like(self.agent1.critic_cell[i])
                     #    self.agent1.actor_hidden[i]=torch.zeros_like(self.agent1.actor_hidden[i])
                     #    self.agent1.critic_hidden[i]=torch.zeros_like(self.agent1.critic_hidden[i])
-                    if reward !=[0,0]:
+                    #if reward !=[0,0]:
+                    if reward[0]>0.05:
                         #print('reward',reward)
                         pass                  
                 else:
@@ -160,10 +164,12 @@ class Trainer:
             total_eval_reward_agent1 = 0
             total_eval_reward_agent2 = 0
             self.step_penalty = 0
+            std_min=self.agent1.config.min_std
+            self.agent1.config.min_std=0.1
             for _ in range(self.config.eval_eps):
                 eval_reward_agent1 = 0
-                self.agent1.config.total_step += 1
-                self.agent2.config.total_step += 1
+                #self.agent1.config.total_step += 1
+                #self.agent2.config.total_step += 1
                 self.agent1.reset()
                 self.agent2.reset()
                 eval_reward_agent2 = 0
@@ -193,6 +199,8 @@ class Trainer:
                             #old_name=env.current_game.game_name if hasattr(env, 'current_game') and hasattr(env.current_game, 'game_name') else None
                             next_state, reward, done, _ = env.step(action)
                             if reward !=[0,0]:
+                                reward[0]=0 if reward[0]<1 else reward[0]
+                                reward[1]=0 if reward[1]<1 else reward[1]
                                 #print('reward',reward)
                                 pass
                             reward[0], reward[1] = reward[0]-step_punishment, reward[1]-step_punishment
@@ -241,43 +249,42 @@ class Trainer:
             })
     
             print(f"评估结果 - 智能体1平均奖励: {mean_eval_reward_agent1:.2f}, 智能体2平均奖励: {mean_eval_reward_agent2:.2f}")
+            self.agent1.config.min_std=std_min
         return mean_eval_reward_agent1
             
     def _renew_args(self):
         """随着训练的进行，逐渐降低学习率、eps_clip 和 entropy_coef"""
         # 减小学习率
-        self.agent1.actor_optimizer.param_groups[0]['lr'] *= 0.9 if self.agent1.actor_optimizer.param_groups[0]['lr'] > 1e-5 else 1e-5 
-        self.agent1.critic_optimizer.param_groups[0]['lr'] *= 0.9 if self.agent1.critic_optimizer.param_groups[0]['lr'] > 1e-5 else 1e-5
+        self.agent1.actor_optimizer.param_groups[0]['lr'] *= 0.984 if self.agent1.actor_optimizer.param_groups[0]['lr'] > 1e-5 else 1e-5 
+        self.agent1.critic_optimizer.param_groups[0]['lr'] *= 0.984 if self.agent1.critic_optimizer.param_groups[0]['lr'] > 1e-5 else 1e-5
         try:
-            self.agent2.actor_optimizer.param_groups[0]['lr'] *= 0.9 if self.agent2.actor_optimizer.param_groups[0]['lr'] > 1e-5 else 1e-5 
-            self.agent2.critic_optimizer.param_groups[0]['lr'] *= 0.9 if self.agent2.critic_optimizer.param_groups[0]['lr'] > 1e-5 else 1e-5
+            self.agent2.actor_optimizer.param_groups[0]['lr'] *= 0.984 if self.agent2.actor_optimizer.param_groups[0]['lr'] > 1e-5 else 1e-5 
+            self.agent2.critic_optimizer.param_groups[0]['lr'] *= 0.984 if self.agent2.critic_optimizer.param_groups[0]['lr'] > 1e-5 else 1e-5
         except:
             pass
 
         # 减小 eps_clip
         try:
-            self.agent1.eps_clip *= 0.95 if self.agent1.eps_clip > 0.05 else 0.05
-            self.agent2.eps_clip *= 0.95 if self.agent2.eps_clip > 0.05 else 0.05
+            self.agent1.eps_clip *= 0.995 if self.agent1.eps_clip > 0.05 else 0.05
+            self.agent2.eps_clip *= 0.995 if self.agent2.eps_clip > 0.05 else 0.05
         except:
-            self.agent1.eps_clip *= 0.95 if self.agent1.eps_clip > 0.05 else 0.05
+            self.agent1.eps_clip *= 0.995 if self.agent1.eps_clip > 0.05 else 0.05
 
         # 减小 entropy_coef
         try:
-            self.agent1.entropy_coef *= 0.97 if self.agent1.entropy_coef > 0.005 else 0.005
-            self.agent2.entropy_coef *= 0.97 if self.agent2.entropy_coef > 0.005 else 0.005 
+            self.agent1.entropy_coef *= 0.993 if self.agent1.entropy_coef > 0.005 else 0.005
+            self.agent2.entropy_coef *= 0.993 if self.agent2.entropy_coef > 0.005 else 0.005 
         except:
-            self.agent1.entropy_coef *= 0.97 if self.agent1.entropy_coef > 0.005 else 0.005
+            self.agent1.entropy_coef *= 0.993 if self.agent1.entropy_coef > 0.005 else 0.005
         #self.config.max_steps=int(self.config.max_steps*0.98) if self.config.max_steps > 400 else 400
     
     def _eval_random(self):
         """评估随机智能体"""
         with torch.no_grad():
-            agent1.sample_count = 0
-            agent2.sample_count = 0
             total_random_eval_reward_agent1 = 0
-            total_random_eval_reward_agent2 = 0
             total_random_against_agent1 = 0
-            total_random_against_agent2 = 0
+            min_std=self.agent1.config.min_std
+            self.agent1.config.min_std=0.1
             for _ in range(self.config.eval_eps):
                 self.envs=get_batch(self.config.batch_size,section=self.section)  # 随机选择游戏地图和智能体数量
                 # 智能体1与随机智能体对抗
@@ -297,6 +304,8 @@ class Trainer:
                     for env, action in zip(self.envs, actions):
                         if env.done ==False:
                             next_state, reward, done, _ = env.step(action)
+                            reward[0]=0 if reward[0]<1 else reward[0]
+                            reward[1]=0 if reward[1]<1 else reward[1]
                         else:
                             next_state=[{'agent_obs':None},{'agent_obs':None}]
                             reward=[0,0]
@@ -315,94 +324,41 @@ class Trainer:
 
                 total_random_eval_reward_agent1 += eval_reward_agent1
                 total_random_against_agent1 += eval_reward_random1
-                try:
-                    if self.agent2.type=='random':
-                        pass
-                except:
-                    # 智能体2与随机智能体对抗
-                    eval_reward_agent2 = 0
-                    eval_reward_random2 = 0
-                    states= [env.reset() for env in self.envs]  # 重置环境
-
-                    for _ in range(self.config.max_steps*6):
-                        old_states_agent1=[state[0] for state in states]
-                        old_states_agent2=[state[1] for state in states]
-                        actions_random2= [self.random_agent.act(old_state_agent1) for old_state_agent1 in old_states_agent1] # 随机智能体选择动作
-                        actions_agent2 = self.agent2.act(old_states_agent2)
-
-                        actions = [[action_agent1, action_agent2] for (action_agent1, action_agent2) in zip(actions_random2, actions_agent2)]
-                        next_states, rewards, dones = [], [], []
-                        for env, action in zip(self.envs, actions):
-                            if env.done ==False:
-                                next_state, reward, done, _ = env.step(action)
-                                env.done=done
-                            else:
-                                next_state=[{'agent_obs':None},{'agent_obs':None}]
-                                reward=[0,0]
-                                done=True                    
-                            next_states.append(next_state)
-                            rewards.append(reward)
-                            dones.append(done if done is not None else False)
-
-                        states = next_states
-                        rewards_agent2 = np.array([reward[1] for reward in rewards])
-                        rewards_random2 = np.array([reward[0] for reward in rewards])
-
-                        eval_reward_agent2 += rewards_agent2.mean()
-                        eval_reward_random2 += rewards_random2.mean()
-
-                        if all(dones):
-                            break
-
-                    total_random_eval_reward_agent2 += eval_reward_agent2
-                    total_random_against_agent2 += eval_reward_random2
+                agent1.config.min_std=min_std
 
             # 计算平均奖励
             mean_random_eval_reward_agent1 = total_random_eval_reward_agent1 / self.config.eval_eps
             mean_random_against_agent1 = total_random_against_agent1 / self.config.eval_eps
-            try:
-                if self.agent2.type=='random':
-                    pass
-            except:
-                mean_random_eval_reward_agent2 = total_random_eval_reward_agent2 / self.config.eval_eps
-                mean_random_against_agent2 = total_random_against_agent2 / self.config.eval_eps
+
             self.agent1.memory.clear()  # 清空缓冲区
-            self.agent2.memory.clear()
             torch.cuda.empty_cache()
             # 记录到 wandb
-            try:
-                wandb.log({
-                    "random_eval_mean_reward_agent1": mean_random_eval_reward_agent1,
-                    "random_eval_mean_reward_agent2": mean_random_eval_reward_agent2,
-                    "random_against_mean_reward_agent1": mean_random_against_agent1,
-                    "random_against_mean_reward_agent2": mean_random_against_agent2
-                })
-                print(f"随机对抗评估结果 - 智能体1平均奖励: {mean_random_eval_reward_agent1:.2f}, ")
-            except:
-                if self.agent2.type=='random':
-                    wandb.log({
-                        "random_eval_mean_reward_agent1": mean_random_eval_reward_agent1,
-                        "random_against_mean_reward_agent1": mean_random_against_agent1,
-                    })
-                print(f"随机对抗评估结果 - 智能体1平均奖励: {mean_random_eval_reward_agent1:.2f},")                
+
+            wandb.log({
+                "random_eval_mean_reward_agent1": mean_random_eval_reward_agent1,
+                "random_against_mean_reward_agent1": mean_random_against_agent1,
+            })
+            print(f"随机对抗评估结果 - 智能体1平均奖励: {mean_random_eval_reward_agent1:.2f},")                
             return mean_random_eval_reward_agent1
     def training(self,save_dir='self_play_dir',step=0):
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         self.dir=save_dir
+        
         best_reward=self._eval_one_batch()
         for epi in range(self.config.num_episodes):
             agent1_copy=self.agent1.clone()
+            best_reward*=0.95
             
             for i in range(self.config.batch_per_epi):
                 self._train_one_step()
             current_reward=self._eval_one_batch()
+            self._eval_random()
             if current_reward>=best_reward:
                 best_reward=current_reward
                 self._save_model(dir=self.dir,step=epi)
                 print('模型更新')
-            else:
-                best_reward*=0.95
+            else:                
                 print('模型未更新')
                 self.agent1=agent1_copy
             #self._save_model(dir=self.dir,step=epi)
@@ -528,6 +484,9 @@ class SelfPlay:
             dir=f'{self.env_type}/number_{i}'
             
             opponent, opponent_id = self.get_opponent()
+            wandb.log({
+                "opponent_id": opponent_id
+            })
             print(f"选择对手: {opponent_id}")
             # 初始化训练器（假设训练器接收当前智能体和环境）
             trainer = Trainer(agent1=self.base_agent_1, agent2=opponent,config=config,dir=dir,section=self.section)
@@ -566,25 +525,34 @@ def all_seed(seed = 1):
     torch.backends.cudnn.enabled = False 
 
 Section_to_game={
-        1:'running',
+        
+        1:'billiard-competition',
         2:'table-hockey',
         3:'football',
         4:'wrestling',
         5:'curling-IJACA-competition',
-        6:'billiard-competition'
+        6:'running1',
+        7:'running2',
+        8:'running3',
+        9:'running4',
 }
 game_to_section={
-        'running':1,
+        'billiard-competition':1,
         'table-hockey':2,
         'football':3,
         'wrestling':4,
         'curling-IJACA-competition':5,
-        'billiard-competition':6
+        'running1':6,
+        'running2':7,
+        'running3':8,
+        'running4':9
 }         
 if __name__ == "__main__":
-    all_seed(1)
-    section=1
+    all_seed(3407)
+    section=2
     game=Section_to_game[section]
+    wandb.init(project=f"MAS-final-all", config=train_config().__dict__, name=f'new-{game}-3')  # 在脚本开始时进行初始化，而不是函数内部
+    
     # Initialize the game and agents
     agent1 = PPO_Agent(config=CnnConfig1(),train_config=train_config(),env_type=game)
     agent2 = PPO_Agent(config=CnnConfig2(),train_config=train_config(),env_type=game)
